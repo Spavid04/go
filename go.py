@@ -339,7 +339,7 @@ if shouldRecreateDirectoryStructure:
             pass
     
     dup = set()
-    files = [x for x in files if x not in dup and not dup.add(x)]
+    files = [x for x in files if x.lower() not in dup and not dup.add(x.lower())]
     
     with gzip.GzipFile(configFilePath, "w") as f:
         json_str = json.dumps(
