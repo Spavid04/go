@@ -75,12 +75,16 @@ def ParallelRunPrinter(shouldRedrawEvent, outStringArray, quitEvent):
                 os.system("cls")
             
             maxStringLen = max(maxStringLen, max([len(s) for s in outStringArray if s]+[0]))
+            done = 0
             
             for line in outStringArray:
                 if line:
                     Cprint(line.ljust(maxStringLen))
+                    done += 1
             
-            time.sleep(0.200)
+            Cprint("[{}]\t:\t[{}]".format(len(outStringArray)-done, len(outStringArray)))
+            
+            time.sleep(0.500)
         else:
             if quitEvent.is_set():
                 return
