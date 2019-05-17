@@ -142,6 +142,7 @@ def invalidArgsAndHelp():
     Cprint("                Avaliable when multiple files with the same name have been matched.")
     Cprint("/expand       : Expands environment variables in the final executable's argument list.")
     Cprint("/admin        : Runs this script (and the target) with the highest privileges.")
+    Cprint("/repeat-XX    : Repeats the execution XX times.")
     Cprint("/addE-XXXX    : Temporarily adds the extension to the executable extensions list.")
     Cprint("/remE-XXXX    : Temporarily removes the extension from the executable extensions list.")
     Cprint("/addD-XXXX    : Temporarily adds the directory to the searched directories list.")
@@ -183,6 +184,7 @@ listFiles = False
 asAdmin = False
 extraArgsList = [] #tuples of (list of strings, int) = argList,targetIndex
 suppressWithYes = False
+repeatCount = 1
 
 while True:
     if scriptParameters + 1 >= len(sys.argv):
@@ -216,6 +218,10 @@ while True:
         listFiles = True
     elif arg.lower() == "/admin":
         asAdmin = True
+    elif arg.lower().startswith("/repeat-"):
+        t = arg[8:]
+        if t != "":
+            repeatCount = int(t)
     elif arg.lower().startswith("/adde-"):
         ext = arg[6:].lower()
         if ext.startswith("."):
@@ -442,6 +448,9 @@ if file != "":
             cwd = os.path.dirname(file)
         
         toRun += [([file] +arrangedParameters, cwd)]
+    
+    if repeatCount > 1:
+        toRun = toRun*repeatCount
 
     if waitForEnd and parallel:
         ParallelRun(toRun)
