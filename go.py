@@ -1,7 +1,5 @@
 executableExtensions = ["exe", "cmd", "bat", "py", "jar"]
 folders_to_check = [
-    "c:\\Windows\\System32",
-    "c:\\PATH\\",
     ]
 
 
