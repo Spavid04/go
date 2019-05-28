@@ -475,7 +475,6 @@ if file != "":
         sourceIndex = 0
         
         if containsInline:
-            #import pdb; pdb.set_trace()
             for i in range(len(arrangedParameters)):
                 match = applyInlineParameterRegex.fullmatch(arrangedParameters[i])
                 if match:
