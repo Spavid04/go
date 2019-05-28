@@ -480,13 +480,15 @@ if file != "":
     if repeatCount > 1:
         toRun = toRun*repeatCount
     
+    if batchCount == 0:
+        batchCount = len(toRun)
+    
     if showOnly:
-        Cprint("\n".join([str(x[0]) for x in toRun]))
+        for chunk in batch(toRun, batchCount):
+            Cprint("\n".join([str(x[0]) for x in chunk]))
+            Cprint()
     else:
         if waitForEnd and parallel:
-            if batchCount == 0:
-                batchCount = len(toRun)
-            
             chunksLeft = math.ceil(len(toRun) / batchCount)
             for chunk in batch(toRun, batchCount):
                 ParallelRun(chunk)
