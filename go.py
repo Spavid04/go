@@ -147,6 +147,7 @@ def invalidArgsAndHelp():
     Cprint("/expand       : Expands environment variables in the final executable's argument list.")
     Cprint("/admin        : Runs this script (and the target) with the highest privileges.")
     Cprint("/repeat-XX    : Repeats the execution XX times.")
+    Cprint("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
     Cprint("/addE-XXXX    : Temporarily adds the extension to the executable extensions list.")
     Cprint("/remE-XXXX    : Temporarily removes the extension from the executable extensions list.")
     Cprint("/addD-XXXX    : Temporarily adds the directory to the searched directories list.")
@@ -160,6 +161,7 @@ def invalidArgsAndHelp():
     Cprint("                If F is specified, a file must be appended to the argument like -\"path\".")
     Cprint("                Multiple apply parameters are supported, but the fewest of the sources will be run.")
     Cprint("                In this case, the resulting parameters are created in the input order, including growing insert indexes.")
+    Cprint("/show         : Display the path of the executable that will be run, along with its arguments. Does not run the target.")
     Cprint()
     Cprint()
     Cprint(">>>Invalid arguments provided!")
@@ -189,6 +191,8 @@ asAdmin = False
 extraArgsList = [] #tuples of (list of strings, int) = argList,targetIndex
 suppressWithYes = False
 repeatCount = 1
+showOnly = False
+rollover = False
 
 while True:
     if scriptParameters + 1 >= len(sys.argv):
@@ -226,6 +230,8 @@ while True:
         t = arg[8:]
         if t != "":
             repeatCount = int(t)
+    elif arg.lower() == "/rollover":
+        rollover = True
     elif arg.lower().startswith("/adde-"):
         ext = arg[6:].lower()
         if ext.startswith("."):
@@ -267,6 +273,8 @@ while True:
             argsTargetIndex = int(options[1][1:])
         
         extraArgsList.append((argsFromSource, argsTargetIndex))
+    elif arg.lower() == "/show":
+        showOnly = True
     else:
         break
     scriptParameters += 1
@@ -274,14 +282,17 @@ while True:
 if len(sys.argv) <= 1 + scriptParameters:
     invalidArgsAndHelp()
 
-minListSize = 0
+targetListSize = 0
 if len(extraArgsList) >= 1:
-    #resize all lists to match the smallest one
+    #resize all lists to match the smallest one, used only if /rollover is not specified, otherwise the largest
     
-    minListSize = len(min(extraArgsList, key= lambda x : len(x[0]))[0])
+    if rollover:
+        targetListSize = len(max(extraArgsList, key= lambda x : len(x[0]))[0])
+    else:
+        targetListSize = len(min(extraArgsList, key= lambda x : len(x[0]))[0])
     
-    if minListSize > 50:
-        Cprint(">>>More than 50 lines ({}) present in the source".format(minListSize))
+    if targetListSize > 50:
+        Cprint(">>>More than 50 lines ({}) present in the source".format(targetListSize))
         if suppressWithYes:
             Cprint(">>>Suppressed with yes")
         else:
@@ -291,7 +302,7 @@ if len(extraArgsList) >= 1:
                 Cprint(">>>Aborted")
                 exit()
 else:
-    minListSize = 1
+    targetListSize = 1
 
 if asAdmin:
     try:
@@ -441,11 +452,11 @@ if file != "":
     
     toRun = []
     
-    for argIndex in range(minListSize):
+    for argIndex in range(targetListSize):
         arrangedParameters = list(parameters)
         
         for i in range(len(extraArgsList)):
-            arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex])
+            arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex % len(extraArgsList[i][0])])
         
         cwd = None
         if changeDir:
@@ -455,12 +466,15 @@ if file != "":
     
     if repeatCount > 1:
         toRun = toRun*repeatCount
-
-    if waitForEnd and parallel:
-        ParallelRun(toRun)
+    
+    if showOnly:
+        Cprint("\n".join([str(x[0]) for x in toRun]))
     else:
-        for (elToRun, cwd) in toRun:
-            if waitForEnd and (not parallel):
-                subprocess.run(elToRun, shell=True, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, cwd=cwd)
-            elif (not waitForEnd) and parallel:
-                subprocess.Popen(elToRun, shell=True, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, cwd=cwd)            
+        if waitForEnd and parallel:
+            ParallelRun(toRun)
+        else:
+            for (elToRun, cwd) in toRun:
+                if waitForEnd and (not parallel):
+                    subprocess.run(elToRun, shell=True, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, cwd=cwd)
+                elif (not waitForEnd) and parallel:
+                    subprocess.Popen(elToRun, shell=True, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, cwd=cwd)            
