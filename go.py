@@ -23,6 +23,7 @@ import hashlib
 from datetime import datetime
 import time
 import gzip
+import math
 
 def Cprint(para = ""):
     try:
@@ -31,6 +32,11 @@ def Cprint(para = ""):
     except:
         pass
     print(para);
+
+def batch(iterable, n=1):
+    l = len(iterable)
+    for ndx in range(0, l, n):
+        yield iterable[ndx:min(ndx + n, l)]
 
 kernel32 = ctypes.windll.kernel32
 kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
@@ -82,7 +88,8 @@ def ParallelRunPrinter(shouldRedrawEvent, outStringArray, quitEvent):
                     Cprint(line.ljust(maxStringLen))
                     done += 1
             
-            Cprint("[{}]\t:\t[{}]".format(len(outStringArray)-done, len(outStringArray)))
+            Cprint("[{}]\t/\t[{}]".format(len(outStringArray)-done, len(outStringArray)))
+            Cprint("[{}] chunks left in queue".format(chunksLeft-1))
             
             time.sleep(0.500)
         else:
@@ -148,6 +155,7 @@ def invalidArgsAndHelp():
     Cprint("/admin        : Runs this script (and the target) with the highest privileges.")
     Cprint("/repeat-XX    : Repeats the execution XX times.")
     Cprint("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
+    Cprint("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
     Cprint("/addE-XXXX    : Temporarily adds the extension to the executable extensions list.")
     Cprint("/remE-XXXX    : Temporarily removes the extension from the executable extensions list.")
     Cprint("/addD-XXXX    : Temporarily adds the directory to the searched directories list.")
@@ -193,6 +201,7 @@ suppressWithYes = False
 repeatCount = 1
 showOnly = False
 rollover = False
+batchCount = 0
 
 while True:
     if scriptParameters + 1 >= len(sys.argv):
@@ -232,6 +241,10 @@ while True:
             repeatCount = int(t)
     elif arg.lower() == "/rollover":
         rollover = True
+    elif arg.lower().startswith("/batch-"):
+        t = arg[7:]
+        if t != "":
+            batchCount = int(t)
     elif arg.lower().startswith("/adde-"):
         ext = arg[6:].lower()
         if ext.startswith("."):
@@ -471,7 +484,13 @@ if file != "":
         Cprint("\n".join([str(x[0]) for x in toRun]))
     else:
         if waitForEnd and parallel:
-            ParallelRun(toRun)
+            if batchCount == 0:
+                batchCount = len(toRun)
+            
+            chunksLeft = math.ceil(len(toRun) / batchCount)
+            for chunk in batch(toRun, batchCount):
+                ParallelRun(chunk)
+                chunksLeft -= 1
         else:
             for (elToRun, cwd) in toRun:
                 if waitForEnd and (not parallel):
