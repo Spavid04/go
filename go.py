@@ -1,6 +1,7 @@
 executableExtensions = ["exe", "cmd", "bat", "py", "jar"]
-folders_to_check = [
+foldersToCheck = [
     ]
+configFiles = ["go.config"]
 
 
 
@@ -38,6 +39,15 @@ def batch(iterable, n=1):
     for ndx in range(0, l, n):
         yield iterable[ndx:min(ndx + n, l)]
 
+def loadConfig(configFile):
+    try:
+        with open(configFile, "r") as f:
+            config = json.loads(f.read())
+            executableExtensions.extend(config["extensions"])
+            foldersToCheck.extend(config["directories"])
+    except:
+        pass
+
 kernel32 = ctypes.windll.kernel32
 kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalLock.restype = ctypes.c_void_p
@@ -56,8 +66,6 @@ def get_clipboard_text():
             return value
     finally:
         user32.CloseClipboard()
-
-configFilePath = os.path.join(tempfile.gettempdir(), ".tree")
 
 def ParallelRunThread(stream, shouldRedrawEvent, id, outStringArray):
     
@@ -130,23 +138,26 @@ def invalidArgsAndHelp():
     Cprint("go [/go_argument1] [/go_argument2] ... (exact filename OR regex) [target args] ...")
     Cprint()
     Cprint("By default, it only searches (non-recursively) in the PATH environment variable.")
+    Cprint("Config files (by default, go.config) can be used to specify \"extensions\" and \"directories\".")
+    Cprint("Config file format: a JSON string containg a tuple of type (list of extensions, list of directories).")
     Cprint("Directories to search for and executable extensions can also be edited in the script file.")
     Cprint("Added directories are searched recursively.")
-    Cprint("Current configuration file path: {}".format(configFilePath))
+    Cprint("Current state file path: {}".format(stateFilePath))
     Cprint()
     Cprint("Avaliable go_arguments:")
     Cprint()
+    Cprint("/config-XXXX  : Uses the specified config file.")
     Cprint("/quiet        : Supresses any messages (but not exceptions) from this script.")
     Cprint("                /y should be considered when using this parameter")
     Cprint("/y            : Suppress inputs by answering \"yes\" (or the equivalent).")
     Cprint("/cd           : Changes the working directory to the target file's directory before running.")
     Cprint("                By default, the working directory is the one that this script is started in.")
     Cprint("                After running the script, it returns the working directory to the original one.")
-    Cprint("/parse        : Forces the recreation of the cached file tree stored in the configuration file.")
+    Cprint("/parse        : Forces the recreation of the state data (including file tree) stored in the state file.")
     Cprint("                Auto-triggered when the last parse has been performed over a day (24h) ago.")
     Cprint("                Auto-triggered when the directory or extension list is differnt.")
     Cprint("/nopath       : Disables searching in the \"PATH\" environment variable.")
-    Cprint("/reset        : Resets (deletes) the configuration file before all actions.")
+    Cprint("/reset        : Resets (deletes) the state file before all actions.")
     Cprint("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     Cprint("/nowait       : Does not wait for the started process to end. This implies /parallel.")
     Cprint("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
@@ -178,11 +189,13 @@ def invalidArgsAndHelp():
     
     exit()
 
+stateFilePath = os.path.join(tempfile.gettempdir(), ".tree")
+
 if len(sys.argv) <= 1:
     invalidArgsAndHelp()
 
 scriptParameters = 0
-shouldRewriteConfig = False
+shouldRewriteState = False
 
 applyRegex = re.compile(r"^\/([cf])apply(-\d+)?(-.+)?$", re.I)
 applyInlineParameterRegex = re.compile(r"^%%(\d*)%%$")
@@ -206,12 +219,19 @@ showOnly = False
 rollover = False
 batchCount = 0
 
+for configFile in configFiles:
+    loadConfig(configFile)
+
 while True:
     if scriptParameters + 1 >= len(sys.argv):
         break
     
     arg = sys.argv[scriptParameters + 1]
-    if arg.lower() == "/quiet":
+    
+    if arg.lower().startswith("/config-"):
+        t = arg[8:]
+        loadConfig(t)
+    elif arg.lower() == "/quiet":
         quiet = True
     elif arg.lower() == "/y":
         suppressWithYes = True
@@ -229,9 +249,9 @@ while True:
         waitForEnd = False
         parallel = True
     elif arg.lower().startswith("/nth-"):
-        nthIndex = arg[5:]
-        if nthIndex != "":
-            nthFile = int(nthIndex)
+        t = arg[5:]
+        if t != "":
+            nthFile = int(t)
     elif arg.lower() == "/expand":
         expandVariables = True
     elif arg.lower() == "/list":
@@ -261,16 +281,16 @@ while True:
             executableExtensions.remove(ext)
     elif arg.lower().startswith("/addd-"):
         dir = arg[6:]
-        folders_to_check.append(dir)
+        foldersToCheck.append(dir)
         shouldRecreateDirectoryStructure = True
     elif arg.lower().startswith("/remd-"):
         dir = arg[6:]
-        if dir in folders_to_check:
-            folders_to_check.remove(dir)
+        if dir in foldersToCheck:
+            foldersToCheck.remove(dir)
             shouldRecreateDirectoryStructure = True
     elif arg.lower() == "/reset":
-        if os.path.isfile(configFilePath):
-            os.remove(configFilePath)
+        if os.path.isfile(stateFilePath):
+            os.remove(stateFilePath)
     elif applyRegex.fullmatch(arg):
         options = applyRegex.fullmatch(arg).groups()
         argsFromSource = []
@@ -330,20 +350,20 @@ if asAdmin:
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
         exit()
 
-if not os.path.isfile(configFilePath):
+if not os.path.isfile(stateFilePath):
     shouldRecreateDirectoryStructure = True
 else:
-    with gzip.GzipFile(configFilePath, "r") as f:
+    with gzip.GzipFile(stateFilePath, "r") as f:
         json_str = f.read().decode("utf-8")
         ((lastParse, oldDirs, oldExts, lastArgsMd5), _) = json.loads(json_str)
     if (datetime.now() - datetime.fromtimestamp(lastParse)).days >= 1:
         shouldRecreateDirectoryStructure = True
-    if tuple(folders_to_check) != tuple(oldDirs) or tuple(executableExtensions) != tuple(oldExts):
+    if tuple(foldersToCheck) != tuple(oldDirs) or tuple(executableExtensions) != tuple(oldExts):
         shouldRecreateDirectoryStructure = True
     if lastArgsMd5 == hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest():
         sameArguments = True
     else:
-        shouldRewriteConfig = True
+        shouldRewriteState = True
 
 files = []
 
@@ -361,7 +381,7 @@ if shouldRecreateDirectoryStructure:
                     files.append(os.path.abspath(os.path.join(r, fl)))
                 break #PATH should not be recursive
     
-    for folder in folders_to_check:
+    for folder in foldersToCheck:
         try:
             for (r,_,f) in os.walk(folder):
                 for fl in f:
@@ -378,21 +398,21 @@ if shouldRecreateDirectoryStructure:
     dup = set()
     files = [x for x in files if x.lower() not in dup and not dup.add(x.lower())]
     
-    with gzip.GzipFile(configFilePath, "w") as f:
+    with gzip.GzipFile(stateFilePath, "w") as f:
         json_str = json.dumps(
-                        ((datetime.now().timestamp(), tuple(folders_to_check), tuple(executableExtensions), hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), files)
+                        ((datetime.now().timestamp(), tuple(foldersToCheck), tuple(executableExtensions), hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), files)
                     ).encode("utf-8")
         f.write(json_str)
 else:
-    with gzip.GzipFile(configFilePath, "r") as f:
+    with gzip.GzipFile(stateFilePath, "r") as f:
         json_str = f.read().decode("utf-8")
         (_, files) = json.loads(json_str)
 
-if shouldRewriteConfig:
-    with gzip.GzipFile(configFilePath, "r") as f:
+if shouldRewriteState:
+    with gzip.GzipFile(stateFilePath, "r") as f:
         json_str = f.read().decode("utf-8")
         ((a11, a12, a13, a14), a2) = json.loads(json_str)
-    with gzip.GzipFile(configFilePath, "w") as f:
+    with gzip.GzipFile(stateFilePath, "w") as f:
         json_str = json.dumps(((a11, a12, a13, hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), a2)).encode("utf-8")
         f.write(json_str)
 
