@@ -165,6 +165,8 @@ def invalidArgsAndHelp():
     Cprint("                If enabled, the pattern should be enclosed in quotes.")
     Cprint("/[cf]apply    : For every line in the specified source, runs the target with the line appended as arguments.")
     Cprint("                One of either C(lipboard) or F(ile) must be specified.")
+    Cprint("                The position of the arguments can be specified by adding a %%%% to the target parameter list.")
+    Cprint("                If a 0-based index is added like %%XX%%, the specified argument source will be selected.")
     Cprint("                A 0-based index can be appended like -XX to specify where to insert the new argument. Defaults to end.")
     Cprint("                If F is specified, a file must be appended to the argument like -\"path\".")
     Cprint("                Multiple apply parameters are supported, but the fewest of the sources will be run.")
@@ -183,6 +185,7 @@ scriptParameters = 0
 shouldRewriteConfig = False
 
 applyRegex = re.compile(r"^\/([cf])apply(-\d+)?(-.+)?$", re.I)
+applyInlineParameterRegex = re.compile(r"^%%(\d*)%%$")
 
 quiet = False
 changeDir = False
@@ -459,6 +462,8 @@ else:
         for i in range(0, len(matchedFiles)):
             Cprint("[{0:2d}]: {1}".format(i, matchedFiles[i]))
 
+containsInline = any([applyInlineParameterRegex.fullmatch(x) != None for x in parameters])
+
 if file != "":
     Cprint("running: "+file)
     sys.stdout.flush()
@@ -467,9 +472,22 @@ if file != "":
     
     for argIndex in range(targetListSize):
         arrangedParameters = list(parameters)
+        sourceIndex = 0
         
-        for i in range(len(extraArgsList)):
-            arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex % len(extraArgsList[i][0])])
+        if containsInline:
+            #import pdb; pdb.set_trace()
+            for i in range(len(arrangedParameters)):
+                match = applyInlineParameterRegex.fullmatch(arrangedParameters[i])
+                if match:
+                    if match.group(1):
+                        sourceIndex = int(match.group(1))
+                    
+                    arrangedParameters[i] = extraArgsList[sourceIndex][0][argIndex % len(extraArgsList[sourceIndex][0])]
+                    
+                    sourceIndex += 1
+        else:
+            for i in range(len(extraArgsList)):
+                arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex % len(extraArgsList[i][0])])
         
         cwd = None
         if changeDir:
