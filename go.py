@@ -147,8 +147,7 @@ def invalidArgsAndHelp():
     Cprint("Avaliable go_arguments:")
     Cprint()
     Cprint("/config-XXXX  : Uses the specified config file.")
-    Cprint("/quiet        : Supresses any messages (but not exceptions) from this script.")
-    Cprint("                /y should be considered when using this parameter")
+    Cprint("/quiet        : Supresses any messages (but not exceptions) from this script. /y is implied.")
     Cprint("/y            : Suppress inputs by answering \"yes\" (or the equivalent).")
     Cprint("/cd           : Changes the working directory to the target file's directory before running.")
     Cprint("                By default, the working directory is the one that this script is started in.")
@@ -174,15 +173,21 @@ def invalidArgsAndHelp():
     Cprint("/list         : Lists any reachable matching files.")
     Cprint("/regex        : Matches the files by regex instead of exact filenames.")
     Cprint("                If enabled, the pattern should be enclosed in quotes.")
-    Cprint("/[cf]apply    : For every line in the specified source, runs the target with the line appended as arguments.")
-    Cprint("                One of either C(lipboard) or F(ile) must be specified.")
+    Cprint("/[cfp]apply   : For every line in the specified source, runs the target with the line added as arguments.")
+    Cprint("                If no inline parameters or indexes are specified, all arguments are appended to the end.")
+    Cprint("                One of either C(lipboard), F(ile) or P(ipe) must be specified.")
     Cprint("                The position of the arguments can be specified by adding a %%%% to the target parameter list.")
     Cprint("                If a 0-based index is added like %%XX%%, the specified argument source will be selected.")
-    Cprint("                A 0-based index can be appended like -XX to specify where to insert the new argument. Defaults to end.")
+    Cprint("                A 0-based index can be appended like -XX to specify where to insert the new argument.")
     Cprint("                If F is specified, a file must be appended to the argument like -\"path\".")
+    Cprint("                If P is specified, arguments will be taken from stdin, up until EOF, and then used. /y is implied.")
     Cprint("                Multiple apply parameters are supported, but the fewest of the sources will be run.")
     Cprint("                In this case, the resulting parameters are created in the input order, including growing insert indexes.")
     Cprint("/show         : Display the path of the executable that will be run, along with its arguments. Does not run the target.")
+    Cprint()
+    Cprint("Miscellaneous:")
+    Cprint()
+    Cprint("Adding a %%?R%% to a target's parameter list will insert the whole go command.")
     Cprint()
     Cprint()
     Cprint(">>>Invalid arguments provided!")
@@ -194,11 +199,13 @@ stateFilePath = os.path.join(tempfile.gettempdir(), ".tree")
 if len(sys.argv) <= 1:
     invalidArgsAndHelp()
 
+capturedScriptParameters = []
 scriptParameters = 0
 shouldRewriteState = False
 
-applyRegex = re.compile(r"^\/([cf])apply(-\d+)?(-.+)?$", re.I)
+applyRegex = re.compile(r"^\/([cfp])apply(-\d+)?(-.+)?$", re.I)
 applyInlineParameterRegex = re.compile(r"^%%(\d*)%%$")
+recurseInlineRegex = re.compile(r"^%%\?R%%$", re.I)
 
 quiet = False
 changeDir = False
@@ -233,6 +240,7 @@ while True:
         loadConfig(t)
     elif arg.lower() == "/quiet":
         quiet = True
+        suppressWithYes = True
     elif arg.lower() == "/y":
         suppressWithYes = True
     elif arg.lower() == "/cd":
@@ -296,14 +304,24 @@ while True:
         argsFromSource = []
         argsTargetIndex = sys.maxsize
         
-        if options[0].lower()=="c":
+        if options[0].lower() == "c":
             cdata = get_clipboard_text()
             
             if cdata:
                 cdata = cdata.decode("utf-8")
                 argsFromSource = [line for line in cdata.split("\r\n") if len(line) > 0]
-        else:
+        elif options[0].lower() == "f":
             argsFromSource = [line.strip() for line in open(options[2][1:])]
+        elif options[0].lower() == "p":
+            suppressWithYes = True
+            
+            while True:
+                try:
+                    t = input()
+                except:
+                    break
+                
+                argsFromSource.append(t)
         
         if options[1]:
             argsTargetIndex = int(options[1][1:])
@@ -313,6 +331,8 @@ while True:
         showOnly = True
     else:
         break
+    
+    capturedScriptParameters.append(arg)
     scriptParameters += 1
 
 if len(sys.argv) <= 1 + scriptParameters:
@@ -354,8 +374,8 @@ if not os.path.isfile(stateFilePath):
     shouldRecreateDirectoryStructure = True
 else:
     with gzip.GzipFile(stateFilePath, "r") as f:
-        json_str = f.read().decode("utf-8")
-        ((lastParse, oldDirs, oldExts, lastArgsMd5), _) = json.loads(json_str)
+        jsonStr = f.read().decode("utf-8")
+        ((lastParse, oldDirs, oldExts, lastArgsMd5), _) = json.loads(jsonStr)
     if (datetime.now() - datetime.fromtimestamp(lastParse)).days >= 1:
         shouldRecreateDirectoryStructure = True
     if tuple(foldersToCheck) != tuple(oldDirs) or tuple(executableExtensions) != tuple(oldExts):
@@ -399,22 +419,22 @@ if shouldRecreateDirectoryStructure:
     files = [x for x in files if x.lower() not in dup and not dup.add(x.lower())]
     
     with gzip.GzipFile(stateFilePath, "w") as f:
-        json_str = json.dumps(
+        jsonStr = json.dumps(
                         ((datetime.now().timestamp(), tuple(foldersToCheck), tuple(executableExtensions), hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), files)
                     ).encode("utf-8")
-        f.write(json_str)
+        f.write(jsonStr)
 else:
     with gzip.GzipFile(stateFilePath, "r") as f:
-        json_str = f.read().decode("utf-8")
-        (_, files) = json.loads(json_str)
+        jsonStr = f.read().decode("utf-8")
+        (_, files) = json.loads(jsonStr)
 
 if shouldRewriteState:
     with gzip.GzipFile(stateFilePath, "r") as f:
-        json_str = f.read().decode("utf-8")
-        ((a11, a12, a13, a14), a2) = json.loads(json_str)
+        jsonStr = f.read().decode("utf-8")
+        ((a11, a12, a13, a14), a2) = json.loads(jsonStr)
     with gzip.GzipFile(stateFilePath, "w") as f:
-        json_str = json.dumps(((a11, a12, a13, hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), a2)).encode("utf-8")
-        f.write(json_str)
+        jsonStr = json.dumps(((a11, a12, a13, hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), a2)).encode("utf-8")
+        f.write(jsonStr)
 
 fileToRun = sys.argv[1 + scriptParameters].lower()
 parameters = sys.argv[2 + scriptParameters:]
@@ -507,6 +527,18 @@ if file != "":
         else:
             for i in range(len(extraArgsList)):
                 arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex % len(extraArgsList[i][0])])
+        
+        #recurse the go parameters if existing
+        i = 0
+        while i < len(arrangedParameters):
+            match = recurseInlineRegex.fullmatch(arrangedParameters[i])
+            if match:
+                arrangedParameters[i] = "go"
+                for r in (sys.argv[1:])[::-1]:
+                    arrangedParameters.insert(i+1, r)
+                i += len(sys.argv[1:])
+            
+            i += 1
         
         cwd = None
         if changeDir:
