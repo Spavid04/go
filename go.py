@@ -1,4 +1,4 @@
-executableExtensions = ["exe", "cmd", "bat", "py", "jar"]
+executableExtensions = ["exe", "cmd", "bat", "py"]
 foldersToCheck = [
     ]
 configFiles = ["go.config"]
