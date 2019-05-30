@@ -226,8 +226,14 @@ showOnly = False
 rollover = False
 batchCount = 0
 
+scriptPath = __file__
+try:
+    scriptPath = os.readlink(scriptPath)
+except:
+    pass
+
 for configFile in configFiles:
-    loadConfig(configFile)
+    loadConfig(os.path.join(os.path.split(scriptPath)[0], configFile))
 
 while True:
     if scriptParameters + 1 >= len(sys.argv):
@@ -544,7 +550,7 @@ if file != "":
         if changeDir:
             cwd = os.path.dirname(file)
         
-        toRun += [([file] +arrangedParameters, cwd)]
+        toRun += [([file] + arrangedParameters, cwd)]
     
     if repeatCount > 1:
         toRun = toRun*repeatCount
