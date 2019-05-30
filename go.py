@@ -436,7 +436,8 @@ if shouldRewriteState:
         jsonStr = json.dumps(((a11, a12, a13, hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), a2)).encode("utf-8")
         f.write(jsonStr)
 
-parameters = sys.argv[1 + scriptParameters:]
+fileToRun = sys.argv[1 + scriptParameters].lower()
+parameters = sys.argv[2 + scriptParameters:]
 
 regexCompiled = None
 if useRegex:
@@ -444,21 +445,6 @@ if useRegex:
 
 if expandVariables:
     parameters = list([os.path.expandvars(param) for param in parameters])
-
-#recurse the go parameters if existing
-if True: #to local-scope i
-    i = 0
-    while i < len(parameters):
-        match = recurseInlineRegex.fullmatch(parameters[i])
-        if match:
-            parameters[i] = "go"
-            for r in (sys.argv[1:])[::-1]:
-                parameters.insert(i+1, r)
-            i += len(sys.argv[1:])
-        
-        i += 1
-
-fileToRun = parameters[0].lower()
 
 matchedFiles = []
 fuzzyMatchedFiles = []
@@ -542,11 +528,23 @@ if file != "":
             for i in range(len(extraArgsList)):
                 arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex % len(extraArgsList[i][0])])
         
+        #recurse the go parameters if existing
+        i = 0
+        while i < len(arrangedParameters):
+            match = recurseInlineRegex.fullmatch(arrangedParameters[i])
+            if match:
+                arrangedParameters[i] = "go"
+                for r in (sys.argv[1:])[::-1]:
+                    arrangedParameters.insert(i+1, r)
+                i += len(sys.argv[1:])
+            
+            i += 1
+        
         cwd = None
         if changeDir:
             cwd = os.path.dirname(file)
         
-        toRun += [(arrangedParameters, cwd)]
+        toRun += [([file] +arrangedParameters, cwd)]
     
     if repeatCount > 1:
         toRun = toRun*repeatCount
