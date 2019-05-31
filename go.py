@@ -25,6 +25,7 @@ from datetime import datetime
 import time
 import gzip
 import math
+import shlex
 
 def Cprint(para = ""):
     try:
@@ -178,9 +179,9 @@ def invalidArgsAndHelp():
     Cprint("                If no inline parameters or indexes are specified, all arguments are appended to the end.")
     Cprint("                One of either C(lipboard), F(ile) or P(ipe) must be specified.")
     Cprint("                The position of the arguments can be specified by adding a %%%% to the target parameter list.")
-    Cprint("                If a 0-based index is added like %%XX%%, the specified argument source will be selected.")
-    Cprint("                A 0-based index can be appended like -XX to specify where to insert the new argument.")
-    Cprint("                If F is specified, a file must be appended to the argument like -\"path\".")
+    Cprint("                If a 0-based index is added like %%XX%%, the specified argument source will be selected. See below.")
+    Cprint("                A 0-based index can be appended to /apply like -XX to specify where to insert the new argument.")
+    Cprint("                If F is specified, a file must be appended to /apply like -\"path\".")
     Cprint("                If P is specified, arguments will be taken from stdin, up until EOF, and then used. /y is implied.")
     Cprint("                Multiple apply parameters are supported, but the fewest of the sources will be run.")
     Cprint("                In this case, the resulting parameters are created in the input order, including growing insert indexes.")
@@ -189,6 +190,8 @@ def invalidArgsAndHelp():
     Cprint("Miscellaneous:")
     Cprint()
     Cprint("Adding a %%?R%% to a target's parameter list will insert the whole go command.")
+    Cprint("All inline parameters can accept modifiers after the first %%:")
+    Cprint("              S split the source into valid shell parameters before inserting them")
     Cprint()
     Cprint()
     Cprint(">>>Invalid arguments provided!")
@@ -205,7 +208,7 @@ scriptParameters = 0
 shouldRewriteState = False
 
 applyRegex = re.compile(r"^\/([cfp])apply(-\d+)?(-.+)?$", re.I)
-applyInlineParameterRegex = re.compile(r"^%%(\d*)%%$")
+applyInlineParameterRegex = re.compile(r"^%%([s])?(\d*)%%$", re.I)
 recurseInlineRegex = re.compile(r"^%%\?R%%$", re.I)
 
 quiet = False
@@ -528,16 +531,38 @@ if file != "":
         arrangedParameters = list(parameters)
         sourceIndex = 0
         
+        i = 0
+        
         if containsInline:
-            for i in range(len(arrangedParameters)):
+            while i < len(arrangedParameters):
                 match = applyInlineParameterRegex.fullmatch(arrangedParameters[i])
                 if match:
+                    split = False
+                
                     if match.group(1):
-                        sourceIndex = int(match.group(1))
+                        if match.group(1).lower() == "s":
+                            split = True
+
+                    if match.group(2):
+                        sourceIndex = int(match.group(2))
                     
-                    arrangedParameters[i] = extraArgsList[sourceIndex][0][argIndex % len(extraArgsList[sourceIndex][0])]
+                    sourceArgs = extraArgsList[sourceIndex][0][argIndex % len(extraArgsList[sourceIndex][0])]
+                    
+                    if split:
+                        sourceArgs = shlex.split(sourceArgs)
+                        
+                        arrangedParameters[i] = sourceArgs[0]
+                        
+                        for j in sourceArgs[:0:-1]:
+                            arrangedParameters.insert(i+1, j)
+                        
+                        i += len(sourceArgs) - 1
+                    else:
+                        arrangedParameters[i] = sourceArgs
                     
                     sourceIndex += 1
+                
+                i += 1
         else:
             for i in range(len(extraArgsList)):
                 arrangedParameters.insert(extraArgsList[i][1], extraArgsList[i][0][argIndex % len(extraArgsList[i][0])])
@@ -550,7 +575,7 @@ if file != "":
                 arrangedParameters[i] = "go"
                 for r in (sys.argv[1:])[::-1]:
                     arrangedParameters.insert(i+1, r)
-                i += len(sys.argv[1:])
+                i += len(sys.argv) - 1
             
             i += 1
         
