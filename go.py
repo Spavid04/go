@@ -100,7 +100,7 @@ def ParallelRunPrinter(shouldRedrawEvent, outStringArray, quitEvent):
                     Cprint(line.ljust(maxStringLen))
                     done += 1
             
-            Cprint("[{}]\t/\t[{}]".format(len(outStringArray)-done, len(outStringArray)))
+            Cprint("[{}]\t/\t[{}] left".format(len(outStringArray)-done, len(outStringArray)))
             Cprint("[{}] chunks left in queue".format(chunksLeft-1))
             
             time.sleep(0.500)
