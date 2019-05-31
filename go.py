@@ -161,6 +161,7 @@ def invalidArgsAndHelp():
     Cprint("/nowait       : Does not wait for the started process to end. This implies /parallel.")
     Cprint("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
     Cprint("                Avaliable when multiple files with the same name have been matched.")
+    Cprint("/in-XXXX      : Allows an alternate way to choose ambiguous executables by specifying a path substring.")
     Cprint("/expand       : Expands environment variables in the final executable's argument list.")
     Cprint("/admin        : Runs this script (and the target) with the highest privileges.")
     Cprint("/repeat-XX    : Repeats the execution XX times.")
@@ -215,6 +216,7 @@ searchInPath = True
 parallel = False
 waitForEnd = True
 nthFile = -1
+inPath = []
 sameArguments = False
 expandVariables = False
 listFiles = False
@@ -266,6 +268,9 @@ while True:
         t = arg[5:]
         if t != "":
             nthFile = int(t)
+    elif arg.lower().startswith("/in-"):
+        t = arg[4:]
+        inPath.append(t)
     elif arg.lower() == "/expand":
         expandVariables = True
     elif arg.lower() == "/list":
@@ -478,6 +483,9 @@ for fullpath in files:
                     fullpath
                 )
             )
+    
+    
+    matchedFiles = [x for x in matchedFiles if all([(y.lower() in x.lower()) for y in inPath])]
 
 if listFiles:
     Cprint("\n".join(matchedFiles))
@@ -504,7 +512,7 @@ else:
         file = matchedFiles[0]
     else:
         Cprint(">>>multiple files found")
-        Cprint("run with the same arguments again to choose [0], or use /nth-XX to choose:")
+        Cprint("run with the same arguments again to choose [0], or use /nth-XX or /in-XXXX to choose:")
         for i in range(0, len(matchedFiles)):
             Cprint("[{0:2d}]: {1}".format(i, matchedFiles[i]))
 
