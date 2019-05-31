@@ -49,6 +49,9 @@ def loadConfig(configFile):
     except:
         pass
 
+def shlex_join(split_command):
+    return ' '.join(shlex.quote(arg) for arg in split_command)
+
 kernel32 = ctypes.windll.kernel32
 kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalLock.restype = ctypes.c_void_p
@@ -519,7 +522,43 @@ else:
         for i in range(0, len(matchedFiles)):
             Cprint("[{0:2d}]: {1}".format(i, matchedFiles[i]))
 
-containsInline = any([applyInlineParameterRegex.fullmatch(x) != None for x in parameters])
+containsInline = any([any([applyInlineParameterRegex.fullmatch(y) != None for y in shlex.split(x)]) for x in parameters])
+
+def inlineParameters(source, sourceIndex):
+    src = list(source)
+
+    index = 0
+    while index < len(src):
+        match = applyInlineParameterRegex.fullmatch(src[index])
+        if match:
+            split = False
+                    
+            if match.group(1):
+                if match.group(1).lower() == "s":
+                    split = True
+
+            if match.group(2):
+                sourceIndex[0] = int(match.group(2))
+            
+            sourceArgs = extraArgsList[sourceIndex[0]][0][argIndex % len(extraArgsList[sourceIndex[0]][0])]
+            
+            if split:
+                sourceArgs = shlex.split(sourceArgs)
+                
+                src[index] = sourceArgs[0]
+                
+                for j in sourceArgs[:0:-1]:
+                    src.insert(index+1, j)
+                
+                index += len(sourceArgs) - 1
+            else:
+                src[index] = sourceArgs
+            
+            sourceIndex[0] += 1
+        
+        index += 1
+    
+    return src
 
 if file != "":
     Cprint("running: "+file)
@@ -529,38 +568,26 @@ if file != "":
     
     for argIndex in range(targetListSize):
         arrangedParameters = list(parameters)
-        sourceIndex = 0
+        sourceIndex = [0]
         
         i = 0
         
         if containsInline:
             while i < len(arrangedParameters):
-                match = applyInlineParameterRegex.fullmatch(arrangedParameters[i])
-                if match:
-                    split = False
+                splitParams = shlex.split(arrangedParameters[i])
+                containsInline = any([applyInlineParameterRegex.fullmatch(x) for x in splitParams])
                 
-                    if match.group(1):
-                        if match.group(1).lower() == "s":
-                            split = True
-
-                    if match.group(2):
-                        sourceIndex = int(match.group(2))
+                if containsInline:
+                    processed = inlineParameters(splitParams, sourceIndex)
                     
-                    sourceArgs = extraArgsList[sourceIndex][0][argIndex % len(extraArgsList[sourceIndex][0])]
-                    
-                    if split:
-                        sourceArgs = shlex.split(sourceArgs)
+                    if len(splitParams) == 1:
+                        arrangedParameters.pop(i)
+                        for j in processed[::-1]:
+                            arrangedParameters.insert(i, j)
                         
-                        arrangedParameters[i] = sourceArgs[0]
-                        
-                        for j in sourceArgs[:0:-1]:
-                            arrangedParameters.insert(i+1, j)
-                        
-                        i += len(sourceArgs) - 1
+                        i += len(processed) - 1
                     else:
-                        arrangedParameters[i] = sourceArgs
-                    
-                    sourceIndex += 1
+                        arrangedParameters[i] = " ".join(processed)
                 
                 i += 1
         else:
