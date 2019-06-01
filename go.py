@@ -211,7 +211,7 @@ def invalidArgsAndHelp():
     Cprint("Miscellaneous:")
     Cprint()
     Cprint("Adding a %%?R%% to a target's parameter list will insert the whole go command.")
-    Cprint("All inline parameters can accept modifiers after the first %%:")
+    Cprint("All inline parameters (but not the recursive one) can accept modifiers after the first %%:")
     Cprint("              S split the source into valid shell parameters before inserting them")
     Cprint()
     Cprint()
