@@ -189,10 +189,8 @@ def invalidArgsAndHelp():
     Cprint("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
     Cprint("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     Cprint("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
-    Cprint("/addE-XXXX    : Temporarily adds the extension to the executable extensions list.")
-    Cprint("/remE-XXXX    : Temporarily removes the extension from the executable extensions list.")
-    Cprint("/addD-XXXX    : Temporarily adds the directory to the searched directories list.")
-    Cprint("/remD-XXXX    : Temporarily removes the directory from the searched directories list.")
+    Cprint("/exts[+-]XXXX    : Temporarily adds or removes the extension to the executable extensions list.")
+    Cprint("/dirs[+-]XXXX    : Temporarily adds or removes the directory to the searched directories list.")
     Cprint("/list         : Lists any reachable matching files.")
     Cprint("/regex        : Matches the files by regex instead of exact filenames.")
     Cprint("                If enabled, the pattern should be enclosed in quotes.")
@@ -319,26 +317,23 @@ while True:
         t = arg[7:]
         if t != "":
             batchCount = int(t)
-    elif arg.lower().startswith("/adde-"):
+    elif arg.lower().startswith("/exts"):
         ext = arg[6:].lower()
         if ext.startswith("."):
             ext = ext[1:]
-        executableExtensions.append(ext)
-    elif arg.lower().startswith("/reme-"):
-        ext = arg[6:].lower()
-        if ext.startswith("."):
-            ext = ext[1:]
-        if ext in executableExtensions:
+        
+        if arg[5] == "+":
+            executableExtensions.append(ext)
+        elif ext in executableExtensions:
             executableExtensions.remove(ext)
-    elif arg.lower().startswith("/addd-"):
+    elif arg.lower().startswith("/dirs"):
         dir = arg[6:]
-        foldersToCheck.append(dir)
+        
         shouldRecreateDirectoryStructure = True
-    elif arg.lower().startswith("/remd-"):
-        dir = arg[6:]
-        if dir in foldersToCheck:
+        if arg[5] == "+":
+            foldersToCheck.append(dir)
+        elif dir in foldersToCheck:
             foldersToCheck.remove(dir)
-            shouldRecreateDirectoryStructure = True
     elif arg.lower() == "/reset":
         if os.path.isfile(stateFilePath):
             os.remove(stateFilePath)
