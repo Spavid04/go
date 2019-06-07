@@ -71,15 +71,14 @@ def get_clipboard_text():
     finally:
         user32.CloseClipboard()
 
-def ParallelRunThread(stream, shouldRedrawEvent, id, outStringArray):
-    
+def ParallelRunPrinter(stream, shouldRedrawEvent, id, outStringArray):
     for line in iter(stream.readline, ''):
         outStringArray[id] = line.rstrip()
         shouldRedrawEvent.set()        
     
     outStringArray[id] = None
 
-def ParallelRunPrinter(shouldRedrawEvent, outStringArray, quitEvent):
+def ParallelRunStatsPrinter(shouldRedrawEvent, outStringArray, quitEvent, doneCount):
     maxStringLen = 0
     
     if not quiet:
@@ -93,48 +92,62 @@ def ParallelRunPrinter(shouldRedrawEvent, outStringArray, quitEvent):
                 os.system("cls")
             
             maxStringLen = max(maxStringLen, max([len(s) for s in outStringArray if s]+[0]))
-            done = 0
             
             for line in outStringArray:
                 if line:
                     Cprint(line.ljust(maxStringLen))
-                    done += 1
             
-            Cprint("[{}]\t/\t[{}] done".format(len(outStringArray)-done, len(outStringArray)))
+            Cprint("[{}]\t/\t[{}] done".format(doneCount[0], len(outStringArray)))
             Cprint("[{}] chunks left in queue".format(chunksLeft-1))
             
             time.sleep(0.500)
         else:
             if quitEvent.is_set():
-                return
+                break
+
+def ParallelRunWaiter(process, doneCount, limitSemaphore):
+    process.wait()
+    limitSemaphore.release()
+    doneCount[0] += 1
 
 def ParallelRun(toRun):
     shouldRedrawEvent = threading.Event()
     outStringArray = [""]*len(toRun)
     subProcesses = [None]*len(toRun)
     
+    doneCount = [0]
     quitEvent = threading.Event()
+    limitSemaphore = None
+    if limitCount > 0:
+        limitSemaphore = threading.Semaphore(value=limitCount)
     
-    printer = threading.Thread(target=ParallelRunPrinter, args=(shouldRedrawEvent, outStringArray, quitEvent))
-    printer.daemon = True
-    printer.start()
+    statsPrinter = threading.Thread(target=ParallelRunStatsPrinter, args=(shouldRedrawEvent, outStringArray, quitEvent, doneCount))
+    statsPrinter.daemon = True
+    statsPrinter.start()
     
     for i in range(len(toRun)):
+        limitSemaphore.acquire()
+        
         subProcesses[i] = subprocess.Popen(toRun[i][0], shell=True, stdin=sys.stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=toRun[i][1], universal_newlines=True, bufsize=1)   
     
-        t = threading.Thread(target=ParallelRunThread, args=(subProcesses[i].stdout, shouldRedrawEvent, i, outStringArray))
+        t = threading.Thread(target=ParallelRunPrinter, args=(subProcesses[i].stdout, shouldRedrawEvent, i, outStringArray))
         t.daemon = True
         t.start()
         
-        t = threading.Thread(target=ParallelRunThread, args=(subProcesses[i].stderr, shouldRedrawEvent, i, outStringArray))
+        t = threading.Thread(target=ParallelRunPrinter, args=(subProcesses[i].stderr, shouldRedrawEvent, i, outStringArray))
         t.daemon = True
         t.start()
+        
+        if limitSemaphore:
+            t = threading.Thread(target=ParallelRunWaiter, args=(subProcesses[i], doneCount, limitSemaphore))
+            t.daemon = True
+            t.start()
     
     for i in range(len(toRun)):
         subProcesses[i].wait()
     
     quitEvent.set()
-    printer.join()
+    statsPrinter.join()
 
 def invalidArgsAndHelp():
     Cprint("This script finds an executable file in a directory list and runs it.")
@@ -170,6 +183,7 @@ def invalidArgsAndHelp():
     Cprint("/admin        : Runs this script (and the target) with the highest privileges.")
     Cprint("/repeat-XX    : Repeats the execution XX times.")
     Cprint("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
+    Cprint("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     Cprint("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
     Cprint("/addE-XXXX    : Temporarily adds the extension to the executable extensions list.")
     Cprint("/remE-XXXX    : Temporarily removes the extension from the executable extensions list.")
@@ -232,6 +246,7 @@ suppressWithYes = False
 repeatCount = 1
 showOnly = False
 rollover = False
+limitCount = 0
 batchCount = 0
 
 scriptPath = __file__
@@ -289,6 +304,10 @@ while True:
             repeatCount = int(t)
     elif arg.lower() == "/rollover":
         rollover = True
+    elif arg.lower().startswith("/limit-"):
+        t = arg[7:]
+        if t != "":
+            limitCount = int(t)
     elif arg.lower().startswith("/batch-"):
         t = arg[7:]
         if t != "":
