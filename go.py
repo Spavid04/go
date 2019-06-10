@@ -114,6 +114,7 @@ def ParallelRunWaiter(process, doneCount, limitSemaphore, shouldRedrawEvent):
 
 def ParallelRun(toRun):
     shouldRedrawEvent = threading.Event()
+    shouldRedrawEvent.set()
     outStringArray = [""]*len(toRun)
     subProcesses = [None]*len(toRun)
     
