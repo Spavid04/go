@@ -173,6 +173,7 @@ def invalidArgsAndHelp():
     Cprint("/parse        : Forces the recreation of the state data (including file tree) stored in the state file.")
     Cprint("                Auto-triggered when the last parse has been performed over a day (24h) ago.")
     Cprint("                Auto-triggered when the directory or extension list is differnt.")
+    Cprint("/notrace      : Does not rewrite the state file automatically. Recommended when running nested go's.")
     Cprint("/nopath       : Disables searching in the \"PATH\" environment variable.")
     Cprint("/reset        : Resets (deletes) the state file before all actions.")
     Cprint("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
@@ -233,6 +234,7 @@ quiet = False
 changeDir = False
 useRegex = False
 shouldRecreateDirectoryStructure = False
+noTrace = False
 searchInPath = True
 parallel = False
 waitForEnd = True
@@ -279,6 +281,8 @@ while True:
         useRegex = True
     elif arg.lower() == "/parse":
         shouldRecreateDirectoryStructure = True
+    elif arg.lower() == "/notrace":
+        noTrace = True
     elif arg.lower() == "/nopath":
         searchInPath = False
     elif arg.lower() == "/parallel":
@@ -455,17 +459,18 @@ if shouldRecreateDirectoryStructure:
     dup = set()
     files = [x for x in files if x.lower() not in dup and not dup.add(x.lower())]
     
-    with gzip.GzipFile(stateFilePath, "w") as f:
-        jsonStr = json.dumps(
-                        ((datetime.now().timestamp(), tuple(foldersToCheck), tuple(executableExtensions), hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), files)
-                    ).encode("utf-8")
-        f.write(jsonStr)
+    if not noTrace:
+        with gzip.GzipFile(stateFilePath, "w") as f:
+            jsonStr = json.dumps(
+                            ((datetime.now().timestamp(), tuple(foldersToCheck), tuple(executableExtensions), hashlib.md5(("\n".join(sys.argv)).encode("utf-8")).hexdigest()), files)
+                        ).encode("utf-8")
+            f.write(jsonStr)
 else:
     with gzip.GzipFile(stateFilePath, "r") as f:
         jsonStr = f.read().decode("utf-8")
         (_, files) = json.loads(jsonStr)
 
-if shouldRewriteState:
+if shouldRewriteState and (not noTrace):
     with gzip.GzipFile(stateFilePath, "r") as f:
         jsonStr = f.read().decode("utf-8")
         ((a11, a12, a13, a14), a2) = json.loads(jsonStr)
