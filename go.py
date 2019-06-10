@@ -105,11 +105,12 @@ def ParallelRunStatsPrinter(shouldRedrawEvent, outStringArray, quitEvent, doneCo
             if quitEvent.is_set():
                 break
 
-def ParallelRunWaiter(process, doneCount, limitSemaphore):
+def ParallelRunWaiter(process, doneCount, limitSemaphore, shouldRedrawEvent):
     process.wait()
     if limitSemaphore:
         limitSemaphore.release()
     doneCount[0] += 1
+    shouldRedrawEvent.set()
 
 def ParallelRun(toRun):
     shouldRedrawEvent = threading.Event()
@@ -140,7 +141,7 @@ def ParallelRun(toRun):
         t.daemon = True
         t.start()
         
-        t = threading.Thread(target=ParallelRunWaiter, args=(subProcesses[i], doneCount, limitSemaphore))
+        t = threading.Thread(target=ParallelRunWaiter, args=(subProcesses[i], doneCount, limitSemaphore, shouldRedrawEvent))
         t.daemon = True
         t.start()
     
