@@ -107,7 +107,8 @@ def ParallelRunStatsPrinter(shouldRedrawEvent, outStringArray, quitEvent, doneCo
 
 def ParallelRunWaiter(process, doneCount, limitSemaphore):
     process.wait()
-    limitSemaphore.release()
+    if limitSemaphore:
+        limitSemaphore.release()
     doneCount[0] += 1
 
 def ParallelRun(toRun):
@@ -126,7 +127,8 @@ def ParallelRun(toRun):
     statsPrinter.start()
     
     for i in range(len(toRun)):
-        limitSemaphore.acquire()
+        if limitSemaphore:
+            limitSemaphore.acquire()
         
         subProcesses[i] = subprocess.Popen(toRun[i][0], shell=True, stdin=sys.stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=toRun[i][1], universal_newlines=True, bufsize=1)   
     
@@ -138,10 +140,9 @@ def ParallelRun(toRun):
         t.daemon = True
         t.start()
         
-        if limitSemaphore:
-            t = threading.Thread(target=ParallelRunWaiter, args=(subProcesses[i], doneCount, limitSemaphore))
-            t.daemon = True
-            t.start()
+        t = threading.Thread(target=ParallelRunWaiter, args=(subProcesses[i], doneCount, limitSemaphore))
+        t.daemon = True
+        t.start()
     
     for i in range(len(toRun)):
         subProcesses[i].wait()
