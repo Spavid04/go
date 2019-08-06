@@ -33,7 +33,15 @@ def Cprint(para = ""):
             return
     except:
         pass
-    print(para);
+    
+    try:
+        if pipeFile is not None:
+            print(para, file=pipeFile)
+            return
+    except:
+        pass
+    
+    print(para)
 
 def batch(iterable, n=1):
     l = len(iterable)
@@ -189,8 +197,8 @@ def invalidArgsAndHelp():
     Cprint("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
     Cprint("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     Cprint("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
-    Cprint("/exts[+-]XXXX    : Temporarily adds or removes the extension to the executable extensions list.")
-    Cprint("/dirs[+-]XXXX    : Temporarily adds or removes the directory to the searched directories list.")
+    Cprint("/exts[+-]XXXX : Temporarily adds or removes the extension to the executable extensions list.")
+    Cprint("/dirs[+-]XXXX : Temporarily adds or removes the directory to the searched directories list.")
     Cprint("/list         : Lists any reachable matching files.")
     Cprint("/regex        : Matches the files by regex instead of exact filenames.")
     Cprint("                If enabled, the pattern should be enclosed in quotes.")
@@ -204,6 +212,8 @@ def invalidArgsAndHelp():
     Cprint("                If P is specified, arguments will be taken from stdin, up until EOF, and then used. /y is implied.")
     Cprint("                Multiple apply parameters are supported, but the fewest of the sources will be run.")
     Cprint("                In this case, the resulting parameters are created in the input order, including growing insert indexes.")
+    Cprint("/fpipe[+-]XXX : Redirects stdout and stderr (including go's own streams) to the specified file.")
+    Cprint("                A \"-\" overwrites the file, a \"+\" appends to the file.")
     Cprint("/show         : Display the path of the executable that will be run, along with its arguments. Does not run the target.")
     Cprint()
     Cprint("Miscellaneous:")
@@ -242,15 +252,17 @@ nthFile = -1
 inPath = []
 sameArguments = False
 expandVariables = False
+repeatCount = 1
+rollover = False
+limitCount = 0
+batchCount = 0
 listFiles = False
 asAdmin = False
 extraArgsList = [] #tuples of (list of strings, int) = argList,targetIndex
 suppressWithYes = False
-repeatCount = 1
+pipeFile = None
+appendPipeFile = False
 showOnly = False
-rollover = False
-limitCount = 0
-batchCount = 0
 
 scriptPath = __file__
 try:
@@ -365,6 +377,16 @@ while True:
             argsTargetIndex = int(options[1][1:])
         
         extraArgsList.append((argsFromSource, argsTargetIndex))
+    elif arg.lower().startswith("/fpipe"):
+        pipeFile = arg[7:]
+        
+        if arg[6] == "+":
+            appendPipeFile = True
+        
+        if appendPipeFile:
+            pipeFile = open(pipeFile, "a+")
+        else:
+            pipeFile = open(pipeFile, "w+")
     elif arg.lower() == "/show":
         showOnly = True
     else:
@@ -640,6 +662,9 @@ if file != "":
     if batchCount == 0:
         batchCount = len(toRun)
     
+    stdout = sys.stdout if pipeFile is None else pipeFile
+    stderr = sys.stderr if pipeFile is None else pipeFile
+    
     if showOnly:
         for chunk in batch(toRun, batchCount):
             Cprint("\n".join([str(x[0]) for x in chunk]))
@@ -653,6 +678,6 @@ if file != "":
         else:
             for (elToRun, cwd) in toRun:
                 if waitForEnd and (not parallel):
-                    subprocess.run(elToRun, shell=True, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, cwd=cwd)
+                    subprocess.run(elToRun, shell=True, stdin=sys.stdin, stdout=stdout, stderr=stderr, cwd=cwd)
                 elif (not waitForEnd) and parallel:
-                    subprocess.Popen(elToRun, shell=True, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, cwd=cwd)            
+                    subprocess.Popen(elToRun, shell=True, stdin=sys.stdin, stdout=stdout, stderr=stderr, cwd=cwd)            
