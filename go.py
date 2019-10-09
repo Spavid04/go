@@ -176,6 +176,7 @@ def invalidArgsAndHelp():
     Cprint()
     Cprint("/config-XXXX  : Uses the specified config file.")
     Cprint("/quiet        : Supresses any messages (but not exceptions) from this script. /y is implied.")
+    Cprint("/echo         : Echoes the command to be run, including arguments, before running it.")
     Cprint("/y            : Suppress inputs by answering \"yes\" (or the equivalent).")
     Cprint("/cd           : Changes the working directory to the target file's directory before running.")
     Cprint("                By default, the working directory is the one that this script is started in.")
@@ -241,6 +242,7 @@ applyInlineParameterRegex = re.compile(r"^%%([s])?(\d*)%%$", re.I)
 recurseInlineRegex = re.compile(r"^%%\?R%%$", re.I)
 
 quiet = False
+echo = False
 changeDir = False
 useRegex = False
 shouldRecreateDirectoryStructure = False
@@ -285,6 +287,8 @@ while True:
     elif arg.lower() == "/quiet":
         quiet = True
         suppressWithYes = True
+    elif arg.lower() == "/echo":
+        echo = True
     elif arg.lower() == "/y":
         suppressWithYes = True
     elif arg.lower() == "/cd":
@@ -605,7 +609,7 @@ def inlineParameters(source, sourceIndex):
     return src
 
 if file != "":
-    Cprint("running: "+file)
+    Cprint("target: "+file)
     sys.stdout.flush()
     
     toRun = []
@@ -677,7 +681,13 @@ if file != "":
                 chunksLeft -= 1
         else:
             for (elToRun, cwd) in toRun:
+                if echo:
+                    Cprint("running: "+str(elToRun))
+                
                 if waitForEnd and (not parallel):
                     subprocess.run(elToRun, shell=True, stdin=sys.stdin, stdout=stdout, stderr=stderr, cwd=cwd)
                 elif (not waitForEnd) and parallel:
-                    subprocess.Popen(elToRun, shell=True, stdin=sys.stdin, stdout=stdout, stderr=stderr, cwd=cwd)            
+                    subprocess.Popen(elToRun, shell=True, stdin=sys.stdin, stdout=stdout, stderr=stderr, cwd=cwd)
+                
+                stdout.flush()
+                stderr.flush()
