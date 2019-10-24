@@ -69,7 +69,7 @@ class Utils(object):
 
     _Clipboard_ValuesInitialized = False
     _Clipboard_Kernel32 = None
-    _Clipboard_Userl32 = None
+    _Clipboard_User32 = None
 
     @staticmethod
     def GetClipboardText() -> str:
@@ -78,22 +78,43 @@ class Utils(object):
             Utils._Clipboard_Kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
             Utils._Clipboard_Kernel32.GlobalLock.restype = ctypes.c_void_p
             Utils._Clipboard_Kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-            Utils._Clipboard_Userl32 = ctypes.windll.user32
-            Utils._Clipboard_Userl32.GetClipboardData.restype = ctypes.c_void_p
+            Utils._Clipboard_User32 = ctypes.windll.user32
+            Utils._Clipboard_User32.GetClipboardData.restype = ctypes.c_void_p
 
             Utils._Clipboard_ValuesInitialized = True
 
-        Utils._Clipboard_Userl32.OpenClipboard(0)
+        Utils._Clipboard_User32.OpenClipboard(0)
         try:
-            if Utils._Clipboard_Userl32.IsClipboardFormatAvailable(1):  # CF_TEXT
-                data = Utils._Clipboard_Userl32.GetClipboardData(1)  # CF_TEXT
+            if Utils._Clipboard_User32.IsClipboardFormatAvailable(1):  # CF_TEXT
+                data = Utils._Clipboard_User32.GetClipboardData(1)  # CF_TEXT
                 data_locked = Utils._Clipboard_Kernel32.GlobalLock(data)
                 text = ctypes.c_char_p(data_locked)
                 value = text.value
                 Utils._Clipboard_Kernel32.GlobalUnlock(data_locked)
-                return value
+                return value.decode("utf-8")
         finally:
-            Utils._Clipboard_Userl32.CloseClipboard()
+            Utils._Clipboard_User32.CloseClipboard()
+
+        return ""
+
+    @staticmethod
+    def ReadStdin() -> typing.List[str]:
+        lines = []
+
+        while True:
+            try:
+                t = input()
+            except:
+                break
+
+            lines.append(t)
+
+        return lines
+
+    @staticmethod
+    def ReadAllLines(file: str) -> typing.List[str]:
+        with open(file) as f:
+            return f.readlines()
 
     @staticmethod
     def EnsureAdmin():
@@ -110,9 +131,11 @@ class Utils(object):
 
 
 class GoConfig:
+    _ApplyRegex = re.compile("^/([cfp])apply-?(.*)$", re.I)
+
     def __init__(self):
         self.ConfigFile = "go.config"
-
+        # todo configurable ^ V
         self.TargetedExtensions = [".exe", ".cmd", ".bat", ".py"]
         self.TargetedDirectories = []
 
@@ -120,15 +143,26 @@ class GoConfig:
         self.DirectoryFilter = None
         self.NthMatch = None
 
-        self.QuietGo = False
+        self.QuietGo = False  # todo
         self.EchoTarget = False
         self.DryRun = False
 
         self.ChangeWorkingDirectory = False
         self.WaitForExit = True
+        self.Parallel = False  # todo
+        self.Batched = False
+        self.ParallelLimit = None
 
-        self.
-        self.Parallel = False
+        self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
+        self.Rollover = False
+        self.RepeatCount = None
+
+    class ApplyElement:
+        def __init__(self, sourceType: str, source: typing.Optional[str] = None):
+            self.SourceType = sourceType
+            self.Source = source
+
+            self.List = None
 
     def TryParseArgument(self, argument: str) -> bool:
         lower = argument.lower()
@@ -160,9 +194,26 @@ class GoConfig:
             self.ChangeWorkingDirectory = True
         elif lower == "/nowait":
             self.WaitForExit = False
-
         elif lower == "/parallel":
             self.Parallel = True
+        elif lower == "/batch":
+            self.Batched = True
+        elif lower.startswith("/limit-"):
+            self.ParallelLimit = int(lower[7:])
+
+        elif GoConfig._ApplyRegex.match(lower):
+            groups = GoConfig._ApplyRegex.match(lower).groups()
+
+            if groups[0] == 'c' or groups[0] == 'p':
+                self.ApplyLists.append(GoConfig.ApplyElement(groups[0]))
+            elif groups[0] == 'f':
+                self.ApplyLists.append(GoConfig.ApplyElement('f', groups[1]))
+            else:
+                return False
+        elif lower == "/rollover":
+            self.Rollover = True
+        elif lower.startswith("/repeat-"):
+            self.RepeatCount = int(lower[8:])
 
         else:
             return False
@@ -177,6 +228,10 @@ class GoConfig:
         if self.Parallel and not self.WaitForExit:
             print(">>>/nowait doesn't do anything with /parallel")
 
+        if self.Batched and not self.ParallelLimit:
+            print(">>>/batch requires /limit to be specified")
+            return False
+
         return True
 
     def FetchFiles(self) -> typing.List[str]:
@@ -189,6 +244,82 @@ class GoConfig:
                 files.append(file)
 
         return files
+
+    def ProcessApplyArguments(self, targetArguments: typing.List[str]) -> typing.List[typing.List[str]]:
+        if len(self.ApplyLists) == 0:
+            return []
+
+        # region generate lists
+
+        for applyArgument in self.ApplyLists:
+            if applyArgument.SourceType == 'c':
+                applyArgument.List = [x for x in Utils.GetClipboardText().split("\r\n") if len(x) > 0]
+            elif applyArgument.SourceType == 'p':
+                applyArgument.List = Utils.ReadStdin()
+            elif applyArgument.SourceType == 'f':
+                applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
+
+        # endregion
+
+        # region adjust lengths
+
+        if self.RepeatCount is not None and self.RepeatCount >= 2:
+            for applyArgument in self.ApplyLists:
+                originalLength = len(applyArgument.List)
+
+                for i in range(self.RepeatCount - 1):
+                    applyArgument.List.extend(applyArgument.List[:originalLength])
+
+        if self.Rollover:
+            maxOriginalLength = max(len(x.List) for x in self.ApplyLists)
+
+            for applyArgument in self.ApplyLists:
+                originalLength = len(applyArgument.List)
+
+                while len(applyArgument.List) < maxOriginalLength:
+                    applyArgument.List.extend(applyArgument.List[:originalLength])
+
+        minLength = min(len(x.List) for x in self.ApplyLists)
+
+        for applyArgument in self.ApplyLists:
+            if len(applyArgument.List) > minLength:
+                applyArgument.List = applyArgument.List[:minLength]
+
+        # endregion
+
+        newArguments = []
+
+        # region process inline markers
+
+        used = [False] * len(self.ApplyLists)  # todo actually apply these
+        self._ApplyListIndex = 0
+
+        for targetArgument in targetArguments:
+            newArgument = self._ProcessInlineMarker(targetArgument)
+            newArguments.append(newArgument)
+
+        applyLength = max(1 if isinstance(x, str) else len(x) for x in targetArguments)
+
+        if applyLength > 1:
+            for i in range(len(newArguments)):
+                if isinstance(newArguments[i], str):
+                    newArguments[i] = [newArguments[i]] * applyLength
+
+        # endregion
+
+        return newArguments
+
+    _InlineMarkerRegex = re.compile(r"^%%(\d*)%%$", re.I)
+
+    # todo search for in-quote markers too
+    def _ProcessInlineMarker(self, argument: str) -> typing.Union[str, typing.List[str]]:
+        match = GoConfig._InlineMarkerRegex.match(argument)
+        if not match:
+            return argument
+
+        # todo return special if marker
+
+        return argument
 
 
 def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[typing.List[str], typing.List[str]]:
@@ -218,14 +349,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     return (exactMatches, fuzzyMatches)
 
 
-def GetDesiredMatchOrExit(config: GoConfig, target: str, targetArguments: typing.List[str]) -> str:
+def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
     (exactMatches, fuzzyMatches) = FindMatchesAndAlternatives(config, target)
-
-    if config.DryRun and config.EchoTarget and len(exactMatches) > 0:
-        for exactMatch in exactMatches:
-            print([exactMatch] + targetArguments)
-
-        exit()
 
     if len(exactMatches) == 0:
         print(">>>no matches found for \"{0}\"!".format(target))
@@ -258,16 +383,23 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str, targetArguments: typing
     return exactMatches[0]
 
 
-def Run(config: GoConfig, target: str, targetArguments: typing.List[str]):
-    target = GetDesiredMatchOrExit(config, target, targetArguments)
+def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[str]]):
+    for arguments in targetArguments:
+        target = GetDesiredMatchOrExit(config, target)
 
-    directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
-    run = subprocess.run if config.WaitForExit else subprocess.Popen
+        if config.DryRun and config.EchoTarget:
+            for exactMatch in target:
+                print([exactMatch] + arguments)
 
-    if config.EchoTarget:
-        print([target] + targetArguments)
+            exit()
 
-    run([target] + targetArguments, shell=True, cwd=directory)
+        directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
+        run = subprocess.run if config.WaitForExit else subprocess.Popen
+
+        if config.EchoTarget:
+            print([target] + arguments)
+
+        run([target] + arguments, shell=True, cwd=directory)
 
 
 if __name__ == "__main__":
@@ -289,6 +421,8 @@ if __name__ == "__main__":
 
     target = sys.argv[i]
     targetArguments = sys.argv[i + 1:]
+
+    targetArguments = Configuration.ProcessApplyArguments(targetArguments)
 
     if not Configuration.Validate():
         exit()
