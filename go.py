@@ -117,6 +117,16 @@ class Utils(object):
             return f.readlines()
 
     @staticmethod
+    def CaptureOutput(command: str) -> typing.List[str]:
+        lines = []
+
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+        for line in process.stdout:
+            lines.append(line.rstrip().decode("utf-8"))
+
+        return lines
+
+    @staticmethod
     def EnsureAdmin():
         hasAdmin = False
 
@@ -131,7 +141,7 @@ class Utils(object):
 
 
 class GoConfig:
-    _ApplyRegex = re.compile("^/([cfp])apply-?(.*)$", re.I)
+    _ApplyRegex = re.compile("^/([cfgip])apply-?(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -146,6 +156,7 @@ class GoConfig:
         self.QuietGo = False  # todo
         self.EchoTarget = False
         self.DryRun = False
+        self.SuppressPrompts = False
 
         self.ChangeWorkingDirectory = False
         self.WaitForExit = True
@@ -179,7 +190,8 @@ class GoConfig:
                 self.NthMatch = int(nthAsString)
 
         elif lower == "/quiet":
-            self.QuietGo = True  # todo
+            self.QuietGo = True
+            self.TryParseArgument("/yes")
         elif lower == "/list":
             self.TryParseArgument("/echo")
             self.TryParseArgument("/dryrun")
@@ -187,6 +199,8 @@ class GoConfig:
             self.EchoTarget = True
         elif lower == "/dryrun":
             self.DryRun = True
+        elif lower == "/yes":
+            self.SuppressPrompts = True
 
         elif lower == "/elevate":
             Utils.EnsureAdmin()
@@ -206,8 +220,8 @@ class GoConfig:
 
             if groups[0] == 'c' or groups[0] == 'p':
                 self.ApplyLists.append(GoConfig.ApplyElement(groups[0]))
-            elif groups[0] == 'f':
-                self.ApplyLists.append(GoConfig.ApplyElement('f', groups[1]))
+            elif groups[0] == 'f' or groups[0] == 'g' or groups[0] == 'i':
+                self.ApplyLists.append(GoConfig.ApplyElement(groups[0], groups[1]))
             else:
                 return False
         elif lower == "/rollover":
@@ -258,6 +272,10 @@ class GoConfig:
                 applyArgument.List = Utils.ReadStdin()
             elif applyArgument.SourceType == 'f':
                 applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
+            elif applyArgument.SourceType == 'g':
+                applyArgument.List = Utils.CaptureOutput(applyArgument.Source)
+            elif applyArgument.SourceType == 'i':
+                applyArgument.List = applyArgument.Source.split(',')
 
         # endregion
 
@@ -291,19 +309,22 @@ class GoConfig:
 
         # region process inline markers
 
-        used = [False] * len(self.ApplyLists)  # todo actually apply these
-        self._ApplyListIndex = 0
+        self._ApplyListsUsed = [False] * len(self.ApplyLists)
+        self._CurrentApplyListIndex = 0
 
         for targetArgument in targetArguments:
             newArgument = self._ProcessInlineMarker(targetArgument)
             newArguments.append(newArgument)
 
-        applyLength = max(1 if isinstance(x, str) else len(x) for x in targetArguments)
+        applyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
 
-        if applyLength > 1:
-            for i in range(len(newArguments)):
-                if isinstance(newArguments[i], str):
-                    newArguments[i] = [newArguments[i]] * applyLength
+        for i in range(len(newArguments)):
+            if isinstance(newArguments[i], str):
+                newArguments[i] = [newArguments[i]] * applyLength
+
+        for i in range(len(self.ApplyLists)):
+            if not self._ApplyListsUsed[i]:
+                newArguments.append(self.ApplyLists[i].List)
 
         # endregion
 
@@ -317,9 +338,22 @@ class GoConfig:
         if not match:
             return argument
 
-        # todo return special if marker
+        if match.groups()[0]:
+            applyIndex = int(match.groups()[0])
 
-        return argument
+            if applyIndex >= len(self.ApplyLists):
+                return argument
+
+            self._ApplyListsUsed[applyIndex] = True
+            self._CurrentApplyListIndex = (applyIndex + 1) % len(self.ApplyLists)
+
+            return self.ApplyLists[applyIndex].List
+        else:
+            applyIndex = self._CurrentApplyListIndex
+            self._ApplyListsUsed[applyIndex] = True
+            self._CurrentApplyListIndex = (self._CurrentApplyListIndex + 1) % len(self.ApplyLists)
+
+            return self.ApplyLists[applyIndex].List
 
 
 def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[typing.List[str], typing.List[str]]:
@@ -384,22 +418,34 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
 
 
 def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[str]]):
-    for arguments in targetArguments:
-        target = GetDesiredMatchOrExit(config, target)
+    runs = 1
+    if config.RepeatCount is not None and len(targetArguments) == 0:
+        runs = config.RepeatCount
+    elif len(targetArguments) != 0:
+        runs = len(targetArguments[0])
 
-        if config.DryRun and config.EchoTarget:
-            for exactMatch in target:
-                print([exactMatch] + arguments)
+    if runs > 50 and not config.SuppressPrompts:
+        print(">>>{0} lines present at source. continue? (y/n)")
+        answer = input()[0]
 
+        if answer != 'y':
             exit()
 
-        directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
-        run = subprocess.run if config.WaitForExit else subprocess.Popen
+    target = GetDesiredMatchOrExit(config, target)
+
+    for run in range(runs):
+        arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
         if config.EchoTarget:
             print([target] + arguments)
+        if config.DryRun:
+            continue
 
-        run([target] + arguments, shell=True, cwd=directory)
+        directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
+        runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
+
+        runMethod([target] + arguments, shell=True, cwd=directory, stdin=sys.stdin, stdout=sys.stdout,
+                  stderr=sys.stderr)
 
 
 if __name__ == "__main__":
@@ -419,12 +465,11 @@ if __name__ == "__main__":
         PrintHelp()
         exit()
 
-    target = sys.argv[i]
-    targetArguments = sys.argv[i + 1:]
-
-    targetArguments = Configuration.ProcessApplyArguments(targetArguments)
-
     if not Configuration.Validate():
         exit()
+
+    target = sys.argv[i]
+    targetArguments = sys.argv[i + 1:]
+    targetArguments = Configuration.ProcessApplyArguments(targetArguments)
 
     Run(Configuration, target, targetArguments)
