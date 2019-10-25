@@ -515,7 +515,10 @@ class ParallelRunner:
 
             os.system("cls")
             for (i, output) in tempArray:
-                print("[{0:3d}]  {1}".format(i, output))
+                print("[{0:3d}]  {1}".format(i + 1, output))
+
+            print("{0:3d} / {1:3d} done".format(sum(1 if x is None else 0 for x in self._PrintArray),
+                                                sum(len(x) for x in self._SubprocessArgs)))
 
             time.sleep(0.25)
 
