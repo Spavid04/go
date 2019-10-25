@@ -1,8 +1,11 @@
 import ctypes
 import difflib
+import json
 import os
 import re
 import subprocess
+import threading
+import time
 import typing
 import sys
 
@@ -103,17 +106,20 @@ class Utils(object):
 
         while True:
             try:
-                t = input()
+                line = input()
             except:
                 break
 
-            lines.append(t)
+            if not line:
+                continue
+
+            lines.append(line)
 
         return lines
 
     @staticmethod
     def ReadAllLines(file: str) -> typing.List[str]:
-        with open(file) as f:
+        with open(file, "utf-8") as f:
             return f.readlines()
 
     @staticmethod
@@ -139,15 +145,23 @@ class Utils(object):
             ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
             exit()
 
+    @staticmethod
+    def Batch(list: typing.List[object], batchSize: int) -> typing.Generator[typing.List[object], None, None]:
+        length = len(list)
+        for i in range(0, length, batchSize):
+            yield list[i:min(i + batchSize, length)]
+
 
 class GoConfig:
     _ApplyRegex = re.compile("^/([cfgip])apply-?(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
-        # todo configurable ^ V
+
         self.TargetedExtensions = [".exe", ".cmd", ".bat", ".py"]
         self.TargetedDirectories = []
+
+        self.ReloadConfig(False)
 
         self.RegexTargetMatch = False
         self.DirectoryFilter = None
@@ -160,13 +174,43 @@ class GoConfig:
 
         self.ChangeWorkingDirectory = False
         self.WaitForExit = True
-        self.Parallel = False  # todo
+        self.Parallel = False
         self.Batched = False
         self.ParallelLimit = None
 
         self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
         self.Rollover = False
         self.RepeatCount = None
+
+    def ReloadConfig(self, overwriteSettings: bool):
+        path = self.ConfigFile
+
+        if os.path.abspath(path).lower() != path.lower():
+            scriptPath = __file__
+            try:
+                scriptPath = os.readlink(scriptPath)
+            except:
+                pass
+
+            scriptDir = os.path.split(scriptPath)[0]
+
+            path = os.path.join(scriptDir, path)
+
+        targetedExtensions = []
+        targetedDirectories = []
+
+        with open(path, "r") as f:
+            config = json.load(f)
+
+            targetedExtensions = config["TargetedExtensions"]
+            targetedDirectories = config["TargetedDirectories"]
+
+        if overwriteSettings:
+            self.TargetedExtensions = targetedExtensions
+            self.TargetedDirectories = targetedDirectories
+        else:
+            self.TargetedExtensions.extend(targetedExtensions)
+            self.TargetedDirectories.extend(targetedDirectories)
 
     class ApplyElement:
         def __init__(self, sourceType: str, source: typing.Optional[str] = None):
@@ -178,7 +222,32 @@ class GoConfig:
     def TryParseArgument(self, argument: str) -> bool:
         lower = argument.lower()
 
-        if lower == "/regex":
+        if lower.startswith("/config-"):
+            path = argument[8:]
+            self.ConfigFile = path
+            self.ReloadConfig(True)
+        elif lower.startswith("/dir"):
+            action = lower[4]
+            path = lower[5:]
+
+            if action == '-':
+                if path in self.TargetedDirectories:
+                    self.TargetedDirectories.remove(path)
+            else:
+                if path not in self.TargetedDirectories:
+                    self.TargetedDirectories.append(path)
+        elif lower.startswith("/ext"):
+            action = lower[4]
+            extension = lower[5:]
+
+            if action == '-':
+                if extension in self.TargetedExtensions:
+                    self.TargetedExtensions.remove(extension)
+            else:
+                if extension not in self.TargetedExtensions:
+                    self.TargetedExtensions.append(extension)
+
+        elif lower == "/regex":
             self.RegexTargetMatch = True
         elif lower.startswith("/in-"):
             self.DirectoryFilter = argument[4:]
@@ -261,7 +330,8 @@ class GoConfig:
 
     def ProcessApplyArguments(self, targetArguments: typing.List[str]) -> typing.List[typing.List[str]]:
         if len(self.ApplyLists) == 0:
-            return []
+            repeat = 1 if self.RepeatCount is None else self.RepeatCount
+            return [[x] * repeat for x in targetArguments]
 
         # region generate lists
 
@@ -356,6 +426,100 @@ class GoConfig:
             return self.ApplyLists[applyIndex].List
 
 
+class ParallelRunner:
+    def __init__(self, config: GoConfig):
+        self._Configuration = config
+
+        self._MaxParallel = None if self._Configuration.Batched else self._Configuration.ParallelLimit
+
+        self._SubprocessArgs = []
+        self._PrintArray = []
+        self._PrintArrayLock = threading.Lock()
+        self._MainRunnerThread = threading.Thread(target=self._Runner)
+        self._PrinterThread = threading.Thread(target=self._Printer)
+        self._PrinterThreadStopEvent = False
+
+    def EnqueueRun(self, subprocessArgs: dict):
+        self._SubprocessArgs.append(subprocessArgs)
+
+    def Start(self):
+        self._Batchify()
+
+        self._MainRunnerThread.start()
+        self._PrinterThread.start()
+        self._MainRunnerThread.join()
+
+        self._PrinterThreadStopEvent = True
+        self._PrinterThread.join()
+
+    def _Batchify(self):
+        batchSize = len(self._SubprocessArgs) if not self._Configuration.Batched else self._Configuration.ParallelLimit
+        self._SubprocessArgs = list(Utils.Batch(self._SubprocessArgs, batchSize))
+
+    def _Runner(self):
+        for batch in self._SubprocessArgs:
+            self._RunBatch(batch)
+
+    def _RunBatch(self, batch: typing.List[dict]):
+        batchSize = len(batch)
+        parallelLimit = batchSize if self._MaxParallel is None else self._MaxParallel
+        semaphore = threading.Semaphore(parallelLimit)
+        threads = []
+
+        for run in batch:
+            semaphore.acquire()
+
+            thread = threading.Thread(target=ParallelRunner._RunInstance,
+                                      args=(dict(run), semaphore, self._PrintArray, self._PrintArrayLock))
+            threads.append(thread)
+
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+    @staticmethod
+    def _RunInstance(runParameters: dict, doneSemaphore: threading.Semaphore,
+                     printList: typing.List, printListLock: threading.Lock):
+        if "stdout" in runParameters and runParameters["stdout"] == sys.stdout:
+            runParameters["stdout"] = subprocess.PIPE
+        # if "stderr" in runParameters and runParameters["stderr"] == sys.stderr:
+        #    runParameters["stderr"] = subprocess.PIPE
+
+        printIndex = None
+        with printListLock:
+            printIndex = len(printList)
+            printList.append(None)
+
+        process = subprocess.Popen(**runParameters)
+
+        for line in process.stdout:
+            with printListLock:
+                printList[printIndex] = line.decode("utf-8").strip()
+
+        with printListLock:
+            printList[printIndex] = None
+
+        doneSemaphore.release()
+
+    def _Printer(self):
+        time.sleep(0.01)
+
+        while not self._PrinterThreadStopEvent:
+            length = len(self._PrintArray)
+            tempArray = []
+
+            for i in range(length):
+                if self._PrintArray[i] is not None:
+                    tempArray.append((i, self._PrintArray[i]))
+
+            os.system("cls")
+            for (i, output) in tempArray:
+                print("[{0:3d}]  {1}".format(i, output))
+
+            time.sleep(0.25)
+
+
 def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[typing.List[str], typing.List[str]]:
     if os.path.abspath(target).lower() == target.lower():
         return ([target], [])
@@ -425,13 +589,14 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
         runs = len(targetArguments[0])
 
     if runs > 50 and not config.SuppressPrompts:
-        print(">>>{0} lines present at source. continue? (y/n)")
+        print(">>>{0} lines present at source. continue? (y/n)".format(runs))
         answer = input()[0]
 
         if answer != 'y':
             exit()
 
     target = GetDesiredMatchOrExit(config, target)
+    parallelRunner = ParallelRunner(config) if config.Parallel else None
 
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
@@ -442,10 +607,17 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
             continue
 
         directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
-        runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
+        subprocessArgs = {"args": [target] + arguments, "shell": True, "cwd": directory,
+                          "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
 
-        runMethod([target] + arguments, shell=True, cwd=directory, stdin=sys.stdin, stdout=sys.stdout,
-                  stderr=sys.stderr)
+        if config.Parallel:
+            parallelRunner.EnqueueRun(subprocessArgs)
+        else:
+            runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
+            runMethod(**subprocessArgs)
+
+    if config.Parallel and not config.DryRun:
+        parallelRunner.Start()
 
 
 if __name__ == "__main__":
