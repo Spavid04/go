@@ -11,8 +11,55 @@ import sys
 
 
 def PrintHelp():
-    # todo
-    pass
+    print("The main use of this script is to find an executable and run it easily.")
+    print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
+    print()
+    print("By default, it only searches (non-recursively) in the %PATH% variable.")
+    print(
+        "Config files (default: go.config) can be used to specify \"TargetedExtensions\" and \"TargetedDirectories\".")
+    print("Added directories are searched recursively.")
+    print()
+    print("Avaliable go arguments:")
+    print()
+    print("/config-XXXX  : Uses the specified config file.")
+    print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
+    print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list.")
+    print()
+    print("/regex        : Matches the files by regex instead of filenames.")
+    print("/in-XXXX      : Allows an alternate way to choose ambiguous executables by specifying a path substring.")
+    print("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
+    print()
+    print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
+    print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
+    print("/echo         : Echoes the command to be run, including arguments, before running it.")
+    print("/dry          : Marks runs as dry. Dry runs do not actually run the target executable.")
+    print("/list         : Alias for /echo and /dry.")
+    print()
+    print("/cd           : Changes the working directory to the target file's directory before running.")
+    print("                By default, the working directory is the one that this script is started in.")
+    print("                After running the script, it returns the working directory to the original one.")
+    print("/elevate      : Requests elevation before running the target.")
+    print("/nowait       : Does not wait for the started process to end. This implies /parallel.")
+    print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
+    print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
+    print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
+    print()
+    print("/repeat-XX    : Repeats the execution XX times.")
+    print(
+        "/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
+    print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
+    print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
+    print("                One of either C(lipboard), F(ile), G(o), I(mmediate) or P(ipe) must be specified.")
+    print("                Types of apply:")
+    print("                    C: reads the input from the clipboard")
+    print("                    F: reads the lines of a file, specified with -\"path\"")
+    print("                    G: reads the output lines of a go command, specified with -\"command\"")
+    print("                    I: reads the immediate string as a comma separated list")
+    print("                    P: reads the input lines from stdin")
+    print("                Inline markers:")
+    print("                    Syntax: %%[index of apply source]%%")
+    print("                    Specifies where to append the apply lists. Can use the same list more times.")
+    print("                    If a number is specified, it takes that list, otherwise it uses the next unused one.")
 
 
 class Utils(object):
@@ -126,7 +173,7 @@ class Utils(object):
     def CaptureOutput(command: str) -> typing.List[str]:
         lines = []
 
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+        process = subprocess.Popen("go " + command, shell=True, stdout=subprocess.PIPE)
         for line in process.stdout:
             lines.append(line.rstrip().decode("utf-8"))
 
@@ -592,10 +639,10 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
         runs = len(targetArguments[0])
 
     if runs > 50 and not config.SuppressPrompts:
-        print(">>>{0} lines present at source. continue? (y/n)".format(runs))
-        answer = input()[0]
+        print(">>>{0} lines present at source. continue? (Y/n)".format(runs))
+        answer = input()
 
-        if answer != 'y':
+        if len(answer) > 0 and answer[0] != 'y':
             exit()
 
     target = GetDesiredMatchOrExit(config, target)
