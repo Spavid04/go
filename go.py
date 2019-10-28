@@ -648,6 +648,8 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
     target = GetDesiredMatchOrExit(config, target)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
 
+    print(">>>running: {0}".format(target))
+
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
