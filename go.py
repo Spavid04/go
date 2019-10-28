@@ -24,9 +24,10 @@ def PrintHelp():
     print("/config-XXXX  : Uses the specified config file.")
     print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
     print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list.")
+    print("/ign[+-]XXXX  : Adds or removes the directory to the ignored directories list (recursive).")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
-    print("/in-XXXX      : Allows an alternate way to choose ambiguous executables by specifying a path substring.")
+    print("/in[+-]XXXX   : Add a path substring filter to choose ambiguous matches (in+ or [not]in-).")
     print("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
@@ -35,9 +36,7 @@ def PrintHelp():
     print("/dry          : Marks runs as dry. Dry runs do not actually run the target executable.")
     print("/list         : Alias for /echo and /dry.")
     print()
-    print("/cd           : Changes the working directory to the target file's directory before running.")
-    print("                By default, the working directory is the one that this script is started in.")
-    print("                After running the script, it returns the working directory to the original one.")
+    print("/cd           : Runs the target in its directory, instead of the current one.")
     print("/elevate      : Requests elevation before running the target.")
     print("/nowait       : Does not wait for the started process to end. This implies /parallel.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
@@ -208,11 +207,12 @@ class GoConfig:
 
         self.TargetedExtensions = [".exe", ".cmd", ".bat", ".py"]
         self.TargetedDirectories = []
+        self.IgnoredDirectories = []
 
         self.ReloadConfig(False)
 
         self.RegexTargetMatch = False
-        self.DirectoryFilter = None
+        self.DirectoryFilter = []  # type: typing.List[typing.Tuple[bool, str]]
         self.NthMatch = None
 
         self.QuietGo = False  # todo
@@ -252,13 +252,16 @@ class GoConfig:
 
             targetedExtensions = config["TargetedExtensions"]
             targetedDirectories = config["TargetedDirectories"]
+            ignoredDirectories = config["IgnoredDirectories"]
 
         if overwriteSettings:
             self.TargetedExtensions = targetedExtensions
             self.TargetedDirectories = targetedDirectories
+            self.IgnoredDirectories = ignoredDirectories
         else:
             self.TargetedExtensions.extend(targetedExtensions)
             self.TargetedDirectories.extend(targetedDirectories)
+            self.IgnoredDirectories.extend(ignoredDirectories)
 
     class ApplyElement:
         def __init__(self, sourceType: str, indexer: typing.Optional[str] = None, source: typing.Optional[str] = None):
@@ -277,7 +280,7 @@ class GoConfig:
             self.ReloadConfig(True)
         elif lower.startswith("/dir"):
             action = lower[4]
-            path = lower[5:]
+            path = os.path.abspath(lower[5:])
 
             if action == '-':
                 if path in self.TargetedDirectories:
@@ -285,6 +288,16 @@ class GoConfig:
             else:
                 if path not in self.TargetedDirectories:
                     self.TargetedDirectories.append(path)
+        elif lower.startswith("/ign"):
+            action = lower[4]
+            path = os.path.abspath(lower[5:])
+
+            if action == '-':
+                if path in self.IgnoredDirectories:
+                    self.IgnoredDirectories.remove(path)
+            else:
+                if path not in self.IgnoredDirectories:
+                    self.IgnoredDirectories.append(path)
         elif lower.startswith("/ext"):
             action = lower[4]
             extension = lower[5:]
@@ -298,8 +311,11 @@ class GoConfig:
 
         elif lower == "/regex":
             self.RegexTargetMatch = True
-        elif lower.startswith("/in-"):
-            self.DirectoryFilter = argument[4:]
+        elif lower.startswith("/in"):
+            mode = True if lower[3] == '+' else False
+            substring = argument[4:]
+
+            self.DirectoryFilter.append((mode, substring))
         elif lower.startswith("/nth"):
             self.NthMatch = 0
 
@@ -587,12 +603,29 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     similarities = []
 
     for file in allFiles:
-        if config.DirectoryFilter:
+        passedThrough = True
+
+        for (include, directoryFilter) in config.DirectoryFilter:
             (directory, _) = os.path.split(file)
             directory = directory.lower()
 
-            if config.DirectoryFilter.lower() not in directory:
-                continue
+            if (include and directoryFilter.lower() not in directory) or \
+                    (not include and directoryFilter.lower() in directory):
+                passedThrough = False
+                break
+
+        if not passedThrough:
+            continue
+
+        passedThrough = True
+
+        for ignoredDirectory in config.IgnoredDirectories:
+            if ignoredDirectory.lower() in file.lower():
+                passedThrough = False
+                break
+
+        if not passedThrough:
+            continue
 
         similarities.append((file, Utils.ComparePathAndFile(file, target, config.RegexTargetMatch)))
 
