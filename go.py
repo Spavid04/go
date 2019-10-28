@@ -50,6 +50,7 @@ def PrintHelp():
     print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
     print("                One of either C(lipboard), F(ile), G(o), I(mmediate) or P(ipe) must be specified.")
+    print("                Optionally accepts a python-like list indexer before the optional \"argument\", like -[XXX].")
     print("                Types of apply:")
     print("                    C: reads the input from the clipboard")
     print("                    F: reads the lines of a file, specified with -\"path\"")
@@ -200,7 +201,7 @@ class Utils(object):
 
 
 class GoConfig:
-    _ApplyRegex = re.compile("^/([cfgip])apply-?(.*)$", re.I)
+    _ApplyRegex = re.compile("^/([cfgip])apply(?:-(\\[[-0-9:]+?\\]))?(?:-(.+))?$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -260,8 +261,9 @@ class GoConfig:
             self.TargetedDirectories.extend(targetedDirectories)
 
     class ApplyElement:
-        def __init__(self, sourceType: str, source: typing.Optional[str] = None):
+        def __init__(self, sourceType: str, indexer: typing.Optional[str] = None, source: typing.Optional[str] = None):
             self.SourceType = sourceType
+            self.Indexer = eval("lambda x : x" + indexer) if indexer else None
             self.Source = source
 
             self.List = None
@@ -334,10 +336,14 @@ class GoConfig:
         elif GoConfig._ApplyRegex.match(lower):
             groups = GoConfig._ApplyRegex.match(lower).groups()
 
-            if groups[0] == 'c' or groups[0] == 'p':
-                self.ApplyLists.append(GoConfig.ApplyElement(groups[0]))
-            elif groups[0] == 'f' or groups[0] == 'g' or groups[0] == 'i':
-                self.ApplyLists.append(GoConfig.ApplyElement(groups[0], groups[1]))
+            type = groups[0]
+            indexer = groups[1]
+            source = groups[2]
+
+            if type == 'c' or type == 'p':
+                self.ApplyLists.append(GoConfig.ApplyElement(type, indexer))
+            elif type == 'f' or type == 'g' or type == 'i':
+                self.ApplyLists.append(GoConfig.ApplyElement(type, indexer, source))
             else:
                 return False
         elif lower == "/rollover":
@@ -393,6 +399,9 @@ class GoConfig:
                 applyArgument.List = Utils.CaptureOutput(applyArgument.Source)
             elif applyArgument.SourceType == 'i':
                 applyArgument.List = applyArgument.Source.split(',')
+
+            if applyArgument.Indexer:
+                applyArgument.List = applyArgument.Indexer(applyArgument.List)
 
         # endregion
 
@@ -649,6 +658,7 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
     parallelRunner = ParallelRunner(config) if config.Parallel else None
 
     print(">>>running: {0}".format(target))
+    sys.stdout.flush()
 
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
