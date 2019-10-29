@@ -305,12 +305,16 @@ class GoConfig:
         targetedExtensions = []
         targetedDirectories = []
 
-        with open(path, "r") as f:
-            config = json.load(f)
+        try:
+            with open(path, "r") as f:
+                config = json.load(f)
 
-            targetedExtensions = config["TargetedExtensions"]
-            targetedDirectories = config["TargetedDirectories"]
-            ignoredDirectories = config["IgnoredDirectories"]
+                targetedExtensions = config["TargetedExtensions"]
+                targetedDirectories = config["TargetedDirectories"]
+                ignoredDirectories = config["IgnoredDirectories"]
+        except:
+            print(">>>config file invalid")
+            return
 
         if overwriteSettings:
             self.TargetedExtensions = targetedExtensions
