@@ -17,7 +17,7 @@ def PrintHelp():
     print()
     print("By default, it only searches (non-recursively) in the %PATH% variable.")
     print(
-        "Config files (default: go.config) can be used to specify \"TargetedExtensions\" and \"TargetedDirectories\".")
+        "Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
     print("Added directories are searched recursively.")
     print()
     print("Avaliable go arguments:")
@@ -50,7 +50,8 @@ def PrintHelp():
     print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
     print("                One of either C(lipboard), F(ile), G(o), I(mmediate) or P(ipe) must be specified.")
-    print("                Optionally accepts a python-like list indexer before the optional \"argument\", like -[XXX].")
+    print(
+        "                Optionally accepts a python-like list indexer before the optional \"argument\", like -[XXX].")
     print("                Types of apply:")
     print("                    C: reads the input from the clipboard")
     print("                    F: reads the lines of a file, specified with -\"path\"")
@@ -220,7 +221,6 @@ class Utils(object):
 
             with lock:
                 yield source.pop(0)
-
 
     @staticmethod
     def _StreamOutput_Helper(stream: typing.IO, eventSemaphore: threading.Semaphore,
