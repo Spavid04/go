@@ -8,6 +8,7 @@ import threading
 import time
 import typing
 import sys
+import unicodedata
 
 
 def PrintHelp():
@@ -178,6 +179,63 @@ class Utils(object):
             lines.append(line.rstrip().decode("utf-8"))
 
         return lines
+
+    @staticmethod
+    def StreamOutput(process: subprocess.Popen) -> typing.Generator[bytes, None, None]:
+        stdout = process.stdout
+        stderr = process.stderr
+
+        newLineSemaphore = threading.Semaphore(0)
+
+        stdoutData = []
+        stdoutLock = threading.Lock()
+
+        stderrData = []
+        stderrLock = threading.Lock()
+
+        stdoutThread = threading.Thread(target=Utils._StreamOutput_Helper, args=(stdout, newLineSemaphore,
+                                                                                 stdoutData, stdoutLock))
+        stderrThread = threading.Thread(target=Utils._StreamOutput_Helper, args=(stderr, newLineSemaphore,
+                                                                                 stderrData, stderrLock))
+
+        stdoutThread.start()
+        stderrThread.start()
+
+        while True:
+            newLineSemaphore.acquire()
+
+            source = None
+            lock = None
+
+            if len(stdoutData) > 0:
+                source = stdoutData
+                lock = stdoutLock
+            elif len(stderrData) > 0:
+                source = stderrData
+                lock = stderrLock
+            else:
+                newLineSemaphore.acquire()
+                if not stdoutThread.is_alive() and not stderrThread.is_alive():
+                    break
+
+            with lock:
+                yield source.pop(0)
+
+
+    @staticmethod
+    def _StreamOutput_Helper(stream: typing.IO, eventSemaphore: threading.Semaphore,
+                             outList: typing.List[bytes], outListLock: threading.Lock):
+        for line in stream:
+            with outListLock:
+                outList.append(line)
+
+            eventSemaphore.release()
+
+        eventSemaphore.release()
+
+    @staticmethod
+    def RemoveControlCharacters(s):
+        return "".join(ch if unicodedata.category(ch)[0] != "C" else " " for ch in s)
 
     @staticmethod
     def EnsureAdmin():
@@ -555,8 +613,8 @@ class ParallelRunner:
                      printList: typing.List, printListLock: threading.Lock):
         if "stdout" in runParameters and runParameters["stdout"] == sys.stdout:
             runParameters["stdout"] = subprocess.PIPE
-        # if "stderr" in runParameters and runParameters["stderr"] == sys.stderr:
-        #    runParameters["stderr"] = subprocess.PIPE
+        if "stderr" in runParameters and runParameters["stderr"] == sys.stderr:
+            runParameters["stderr"] = subprocess.PIPE
 
         printIndex = None
         with printListLock:
@@ -565,7 +623,7 @@ class ParallelRunner:
 
         process = subprocess.Popen(**runParameters)
 
-        for line in process.stdout:
+        for line in Utils.StreamOutput(process):
             with printListLock:
                 printList[printIndex] = line.decode("utf-8").strip()
 
@@ -587,7 +645,7 @@ class ParallelRunner:
 
             os.system("cls")
             for (i, output) in tempArray:
-                print("[{0:3d}]  {1}".format(i + 1, output))
+                print("[{0:3d}]  {1}".format(i + 1, Utils.RemoveControlCharacters(output)))
 
             print("{0:3d} / {1:3d} done".format(sum(1 if x is None else 0 for x in self._PrintArray),
                                                 sum(len(x) for x in self._SubprocessArgs)))
