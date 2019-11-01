@@ -168,7 +168,7 @@ class Utils(object):
 
     @staticmethod
     def ReadAllLines(file: str) -> typing.List[str]:
-        with open(file, "utf-8") as f:
+        with open(file, "r", encoding="utf-8") as f:
             return f.readlines()
 
     @staticmethod
