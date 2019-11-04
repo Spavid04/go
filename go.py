@@ -169,7 +169,7 @@ class Utils(object):
     @staticmethod
     def ReadAllLines(file: str) -> typing.List[str]:
         with open(file, "r", encoding="utf-8") as f:
-            return f.readlines()
+            return [x.rstrip("\r\n") for x in f.readlines()]
 
     @staticmethod
     def CaptureOutput(command: str) -> typing.List[str]:
