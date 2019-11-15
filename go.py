@@ -18,7 +18,9 @@ def PrintHelp():
     print("By default, it only searches (non-recursively) in the %PATH% variable.")
     print(
         "Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
+    print("Config files are json files")
     print("Added directories are searched recursively.")
+    print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
     print()
     print("Avaliable go arguments:")
     print()
@@ -38,13 +40,13 @@ def PrintHelp():
     print("/list         : Alias for /echo and /dry.")
     print()
     print("/cd           : Runs the target in its directory, instead of the current one.")
-    print("/elevate      : Requests elevation before running the target.")
+    print("/elevate      : Requests elevation before running the target. Might break stdin/out/err pipes.")
     print("/nowait       : Does not wait for the started process to end. This implies /parallel.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
     print()
-    print("/repeat-XX    : Repeats the execution XX times.")
+    print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print(
         "/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
     print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
@@ -60,8 +62,8 @@ def PrintHelp():
     print("                    P: reads the input lines from stdin")
     print("                Inline markers:")
     print("                    Syntax: %%[index of apply source]%%")
-    print("                    Specifies where to append the apply lists. Can use the same list more times.")
-    print("                    If a number is specified, it takes that list, otherwise it uses the next unused one.")
+    print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
+    print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
 
 
 class Utils(object):
