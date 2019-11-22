@@ -442,7 +442,8 @@ class GoConfig:
             return False
 
         if self.Parallel and not self.WaitForExit:
-            print(">>>/nowait doesn't do anything with /parallel")
+            if not self.QuietGo:
+                print(">>>/nowait doesn't do anything with /parallel")
 
         if self.Batched and not self.ParallelLimit:
             print(">>>/batch requires /limit to be specified")
@@ -639,6 +640,9 @@ class ParallelRunner:
         doneSemaphore.release()
 
     def _Printer(self):
+        if self._Configuration.QuietGo:
+            return
+
         time.sleep(0.01)
 
         while not self._PrinterThreadStopEvent:
@@ -754,13 +758,14 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
     target = GetDesiredMatchOrExit(config, target)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
 
-    print(">>>running: {0}".format(target))
-    sys.stdout.flush()
+    if not config.QuietGo:
+        print(">>>running: {0}".format(target))
+        sys.stdout.flush()
 
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
-        if config.EchoTarget:
+        if config.EchoTarget and not config.QuietGo:
             print([target] + arguments)
         if config.DryRun:
             continue
