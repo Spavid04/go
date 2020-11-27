@@ -264,18 +264,15 @@ class Utils(object):
     @staticmethod
     def CreateBatchFile(list: typing.List[typing.List[str]]) -> str:
         suffix = None
-        endl = None
         if os.name == "nt":
             suffix = ".bat"
-            endl = "\r\n"
         else:
             suffix = ".sh"
-            endl = "\n"
 
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=suffix, delete=False, newline=None) as f:
             for r in list:
                 f.write(" ".join(r))
-                f.write(endl)
+                f.write("\n")
 
             return f.name
 
