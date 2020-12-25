@@ -46,24 +46,24 @@ def PrintHelp():
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
-    print(
-        "/asbatch      : Passes all commands to the default shell interpretor, as a file. Incompatible with most modifiers.")
+    print("/asbatch      : Passes all commands to the default shell interpretor, as a file. Incompatible with most modifiers.")
     print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
-    print(
-        "/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
+    print("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
     print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
     print("                One of either C(lipboard), F(ile), G(o), I(mmediate) or P(ipe) must be specified.")
-    print(
-        "                Optionally accepts a python-like list indexer before the optional \"argument\", like -[XXX].")
+    print("                Can accept a number of modifiers with +[modifier] before any arguments.")
     print("                Types of apply:")
     print("                    C: reads the input from the clipboard")
-    print("                    F: reads the lines of a file, specified with -\"path\"")
-    print("                    G: reads the output lines of a go command, specified with -\"command\"")
-    print("                    I: reads the immediate string as a comma separated list")
+    print("                    F: reads the lines of a file, specified with *-path")
+    print("                    G: reads the output lines of a go command, specified with *-command")
+    print("                    I: reads the immediate string as a comma separated list, specified with *-text")
     print("                    P: reads the input lines from stdin")
-    print("                Inline markers:")
+    print("                Modifiers:")
+    print("                    +i:x      inserts the argument in the command at the specified 0-based index")
+    print("                    +ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
+    print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
     print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
@@ -278,7 +278,7 @@ class Utils(object):
 
 
 class GoConfig:
-    _ApplyRegex = re.compile("^/([cfgip])apply(?:-(\\[[-0-9:]+?\\]))?(?:-(.+))?$", re.I)
+    _ApplyRegex = re.compile("^/([cfgip])apply(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -347,9 +347,12 @@ class GoConfig:
             self.IgnoredDirectories.extend(ignoredDirectories)
 
     class ApplyElement:
-        def __init__(self, sourceType: str, indexer: typing.Optional[str] = None, source: typing.Optional[str] = None):
+        def __init__(self,
+                     sourceType: str,
+                     modifiers: typing.Optional[typing.List[typing.Tuple[str, typing.Any]]] = None,
+                     source: typing.Optional[str] = None):
             self.SourceType = sourceType
-            self.Indexer = eval("lambda x : x" + indexer) if indexer else None
+            self.Modifiers = modifiers if modifiers is not None else []
             self.Source = source
 
             self.List = None
@@ -436,17 +439,36 @@ class GoConfig:
 
         elif GoConfig._ApplyRegex.match(lower):
             groups = GoConfig._ApplyRegex.match(lower).groups()
-
             type = groups[0]
-            indexer = groups[1]
-            source = groups[2]
+            argsstr = groups[1]
+            argregex = re.compile("\\+\\[(.+?)\\]|-(.+)$", re.I)
 
-            if type == 'c' or type == 'p':
-                self.ApplyLists.append(GoConfig.ApplyElement(type, indexer))
-            elif type == 'f' or type == 'g' or type == 'i':
-                self.ApplyLists.append(GoConfig.ApplyElement(type, indexer, source))
-            else:
-                return False
+            modifiers = []
+            applyArgument = None
+
+            for match in argregex.finditer(argsstr):
+                if match.group(1):
+                    modifierText = match.group(1)
+                    if m := re.match("i:(\\d+)", modifierText, re.I):
+                        modifiers.append(("i", int(m.group(1))))
+                    elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
+                        x = m.group(1) or ""
+                        y = m.group(3) or ""
+                        z = m.group(5) or ""
+                        colons = bool(m.group(2)) + bool(m.group(4))
+
+                        expression = x
+                        if colons >= 1:
+                            expression += ":" + y
+                        if colons == 2:
+                            expression += ":" + z
+
+                        func = eval("lambda x : x[" + expression + "]")
+                        modifiers.append(("ss", func))
+                elif match.group(2):
+                    applyArgument = match.group(2)
+
+            self.ApplyLists.append(GoConfig.ApplyElement(type, modifiers, applyArgument))
         elif lower == "/rollover":
             self.Rollover = True
         elif lower.startswith("/repeat-"):
@@ -505,8 +527,14 @@ class GoConfig:
             elif applyArgument.SourceType == 'i':
                 applyArgument.List = applyArgument.Source.split(',')
 
-            if applyArgument.Indexer:
-                applyArgument.List = applyArgument.Indexer(applyArgument.List)
+        # endregion
+
+        # region process modifiers
+
+        for applyArgument in self.ApplyLists:
+            for modifier in applyArgument.Modifiers:
+                if modifier[0] == "ss":
+                    applyArgument.List = [modifier[1](x) for x in applyArgument.List]
 
         # endregion
 
@@ -538,7 +566,7 @@ class GoConfig:
 
         newArguments = []
 
-        # region process inline markers
+        # region process indexers and inline markers
 
         self._ApplyListsUsed = [False] * len(self.ApplyLists)
         self._CurrentApplyListIndex = 0
@@ -546,6 +574,10 @@ class GoConfig:
         for targetArgument in targetArguments:
             newArgument = self._ProcessInlineMarker(targetArgument)
             newArguments.append(newArgument)
+
+        for applyArgument in self.ApplyLists:
+            for indexer in (x for x in applyArgument.Modifiers if x[0] == "i"):
+                newArguments.insert(indexer[1], applyArgument.List)
 
         applyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
 
