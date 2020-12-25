@@ -51,7 +51,8 @@ def PrintHelp():
     print("                Overrides the target to be run with the default shell interpreter.")
     print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
-    print("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
+    print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
+    print("                + (default) and - control whether to repeat source lists that are smaller, or to pass empty.")
     print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
     print("                One of either C(lipboard), F(ile), G(o), I(mmediate) or P(ipe) must be specified.")
@@ -319,6 +320,7 @@ class GoConfig:
 
         self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
         self.Rollover = False
+        self.RolloverZero = False
         self.RepeatCount = None
 
     def ReloadConfig(self, overwriteSettings: bool):
@@ -483,8 +485,10 @@ class GoConfig:
                     applyArgument = match.group(2)
 
             self.ApplyLists.append(GoConfig.ApplyElement(type, modifiers, applyArgument))
-        elif lower == "/rollover":
+        elif lower.startswith("/rollover"):
             self.Rollover = True
+            if "-" in lower:
+                self.RolloverZero = True
         elif lower.startswith("/repeat-"):
             self.RepeatCount = int(lower[8:])
 
@@ -563,8 +567,11 @@ class GoConfig:
             for applyArgument in self.ApplyLists:
                 originalLength = len(applyArgument.List)
 
-                while len(applyArgument.List) < maxOriginalLength:
-                    applyArgument.List.extend(applyArgument.List[:originalLength])
+                if self.RolloverZero:
+                    applyArgument.List += [""] * (maxOriginalLength - originalLength)
+                else:
+                    while len(applyArgument.List) < maxOriginalLength:
+                        applyArgument.List.extend(applyArgument.List[:originalLength])
 
         minLength = min(len(x.List) for x in self.ApplyLists)
 
