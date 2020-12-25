@@ -15,6 +15,7 @@ import unicodedata
 def PrintHelp():
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
+    print("Run with /examples to print some usage examples.")
     print()
     print("By default, it only searches (non-recursively) in the %PATH% variable.")
     print(
@@ -46,7 +47,7 @@ def PrintHelp():
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
-    print("/asbatch      : Passes all commands to the default shell interpretor, as a file. Incompatible with most modifiers.")
+    print("/asbatch      : Passes all commands to the default shell interpreter, as a file. Incompatible with most modifiers.")
     print("                Appending a + after the argument will not disable shell echo. (/asbatch+)")
     print("                Overrides the target to be run with the default shell interpreter.")
     print()
@@ -70,6 +71,32 @@ def PrintHelp():
     print("                    Syntax: %%[index of apply source]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
     print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
+
+
+def PrintExamples():
+    print("Run a program:")
+    print("    go calc")
+    print()
+    print("Run a specific program, regardless of it being found or not:")
+    print("    go C:\\NotInPath\\ayy.exe")
+    print()
+    print("Run a program in its directory:")
+    print("    go /cd cmd /c dir /b")
+    print()
+    print("Temporarily add an extension to the allowed list, and run a program with it:")
+    print("    go /ext+\"bat\" batchfile")
+    print()
+    print("Fetch all urls listed in a file, with wget:")
+    print("    go /fapply-\"urls.txt\" wget")
+    print()
+    print("Use a go subcommand as an apply argument:")
+    print("    go /gapply-\"cmd /c dir\" cmd /c echo")
+    print()
+    print("Explicitly set apply argument position with inline markers:")
+    print("    go /iapply-\"3,4\" /iapply-\"1,2\" cmd /c echo %%1%% %%0%%")
+    print()
+    print("Print last 4 characters of all files in the current directory, read from stdin:")
+    print("    dir /b | go /papply+[ss:-4:] cmd /c echo")
 
 
 class Utils(object):
@@ -374,7 +401,11 @@ class GoConfig:
     def TryParseArgument(self, argument: str) -> bool:
         lower = argument.lower()
 
-        if lower.startswith("/config-"):
+        if lower == "/examples":
+            PrintExamples()
+            exit(0)
+
+        elif lower.startswith("/config-"):
             path = argument[8:]
             self.ConfigFile = path
             self.ReloadConfig(True)
