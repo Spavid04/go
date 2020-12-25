@@ -47,6 +47,8 @@ def PrintHelp():
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
     print("/asbatch      : Passes all commands to the default shell interpretor, as a file. Incompatible with most modifiers.")
+    print("                Appending a + after the argument will not disable shell echo. (/asbatch+)")
+    print("                Overrides the target to be run with the default shell interpreter.")
     print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover     : Modifies apply parameters to run as many times as possible, repeating source lists that are smaller.")
@@ -262,17 +264,26 @@ class Utils(object):
             yield list[i:min(i + batchSize, length)]
 
     @staticmethod
-    def CreateBatchFile(list: typing.List[typing.List[str]]) -> str:
-        suffix = None
+    def CreateBatchFile(list: typing.List[typing.List[str]], echoOff: bool) -> str:
         if os.name == "nt":
+            echo = "@echo off"
             suffix = ".bat"
+            selfDelete = "(goto) 2>nul & del \"%~f0\""
         else:
+            echo = ""
             suffix = ".sh"
+            selfDelete = ""
 
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=suffix, delete=False, newline=None) as f:
+            f.write(echo)
+            f.write("\n")
+
             for r in list:
                 f.write(" ".join(r))
                 f.write("\n")
+
+            f.write(selfDelete)
+            f.write("\n")
 
             return f.name
 
@@ -304,6 +315,7 @@ class GoConfig:
         self.Batched = False
         self.ParallelLimit = None
         self.AsBatch = False
+        self.EchoOff = True
 
         self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
         self.Rollover = False
@@ -434,8 +446,10 @@ class GoConfig:
             self.Batched = True
         elif lower.startswith("/limit-"):
             self.ParallelLimit = int(lower[7:])
-        elif lower == "/asbatch":
+        elif lower.startswith("/asbatch"):
             self.AsBatch = True
+            if "+" in lower:
+                self.EchoOff = False
 
         elif GoConfig._ApplyRegex.match(lower):
             groups = GoConfig._ApplyRegex.match(lower).groups()
@@ -480,10 +494,6 @@ class GoConfig:
         return True
 
     def Validate(self) -> bool:
-        if self.DryRun and not self.EchoTarget:
-            print(">>>invalid arguments: /dry requires /echo")
-            return False
-
         if self.Parallel and not self.WaitForExit:
             if not self.QuietGo:
                 print(">>>/nowait doesn't do anything with /parallel")
@@ -810,7 +820,7 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
     return exactMatches[0]
 
 
-def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[str]]):
+def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.List[str]]):
     runs = 1
     if config.RepeatCount is not None and len(targetArguments) == 0:
         runs = config.RepeatCount
@@ -824,12 +834,15 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
         if len(answer) > 0 and answer[0] != 'y':
             exit()
 
-    target = GetDesiredMatchOrExit(config, target)
+    if config.AsBatch:
+        target = GetDesiredMatchOrExit(config, "cmd.exe")
+    else:
+        target = GetDesiredMatchOrExit(config, goTarget)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
     runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
 
     if not config.QuietGo:
-        print(">>>running: {0}".format(target))
+        print(">>>target: {0}".format(target))
         sys.stdout.flush()
 
     asbatchArguments = []
@@ -838,11 +851,11 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
         if config.EchoTarget and not config.QuietGo:
-            print([target] + arguments)
+            print([target if not config.AsBatch else goTarget] + arguments)
         if config.DryRun:
             continue
         if config.AsBatch:
-            asbatchArguments.append([target] + arguments)
+            asbatchArguments.append([goTarget] + arguments)
             continue
 
         directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
@@ -857,7 +870,7 @@ def Run(config: GoConfig, target: str, targetArguments: typing.List[typing.List[
     if config.Parallel and not config.DryRun:
         parallelRunner.Start()
     if config.AsBatch:
-        tempbatchPath = Utils.CreateBatchFile(asbatchArguments)
+        tempbatchPath = Utils.CreateBatchFile(asbatchArguments, config.EchoOff)
         subprocessArgs = {"args": [tempbatchPath], "shell": True,
                           "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
         runMethod(**subprocessArgs)
