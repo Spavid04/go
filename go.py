@@ -67,6 +67,7 @@ def PrintHelp():
     print("                Modifiers:")
     print("                    +i:x      inserts the argument in the command at the specified 0-based index")
     print("                    +ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
+    print("                    +r:regex  returns the first match using the specified regex")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
@@ -97,6 +98,9 @@ def PrintExamples():
     print()
     print("Print last 4 characters of all files in the current directory, read from stdin:")
     print("    dir /b | go /papply+[ss:-4:] cmd /c echo")
+    print()
+    print("Print only the extensions of all files in the current directory, read from stdin; not using [^.]+ due to parsing issues:")
+    print("dir /b | go /papply+[r:\\..+?$] cmd /c echo")
 
 
 class Utils(object):
@@ -488,7 +492,7 @@ class GoConfig:
             groups = GoConfig._ApplyRegex.match(lower).groups()
             type = groups[0]
             argsstr = groups[1]
-            argregex = re.compile("\\+\\[(.+?)\\]|-(.+)$", re.I)
+            argregex = re.compile("\\+\\[(.+?)\\](?=$|-|\\+)|-(.+)$", re.I)
 
             modifiers = []
             applyArgument = None
@@ -512,6 +516,8 @@ class GoConfig:
 
                         func = eval("lambda x : x[" + expression + "]")
                         modifiers.append(("ss", func))
+                    elif m := re.match("r:(.+)", modifierText, re.I):
+                        modifiers.append(("r", m.group(1)))
                 elif match.group(2):
                     applyArgument = match.group(2)
 
@@ -580,6 +586,14 @@ class GoConfig:
             for modifier in applyArgument.Modifiers:
                 if modifier[0] == "ss":
                     applyArgument.List = [modifier[1](x) for x in applyArgument.List]
+                elif modifier[0] == "r":
+                    regex = re.compile(modifier[1], re.I)
+                    for i in range(len(applyArgument.List)):
+                        match = regex.match(applyArgument.List[i])
+                        if match:
+                            applyArgument.List[i] = match.group(0)
+                        else:
+                            applyArgument.List[i] = ""
 
         # endregion
 
