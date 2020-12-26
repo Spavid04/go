@@ -1,3 +1,5 @@
+# VERSION 20.12.26.01
+
 import ctypes
 import difflib
 import json
