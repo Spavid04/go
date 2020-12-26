@@ -1,4 +1,4 @@
-# VERSION 20.12.26.01
+# VERSION 20.12.26.02
 
 import ctypes
 import difflib
@@ -22,9 +22,10 @@ def PrintHelp():
     print("By default, it only searches (non-recursively) in the %PATH% variable.")
     print(
         "Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
-    print("Config files are json files")
+    print("Config files are json files.")
     print("Added directories are searched recursively.")
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
+    print("Set key \"AlwaysYes\" in the config file to always set /yes.")
     print()
     print("Avaliable go arguments:")
     print()
@@ -71,7 +72,7 @@ def PrintHelp():
     print("                    +ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
     print("                    +r:regex  returns the first match using the specified regex")
     print("                Inline (inside command arguments) markers:")
-    print("                    Syntax: %%[index of apply source]%%")
+    print("                    Syntax: %%[index of apply source; negatives allowed]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
     print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
 
@@ -332,8 +333,6 @@ class GoConfig:
         self.TargetedDirectories = []
         self.IgnoredDirectories = []
 
-        self.ReloadConfig(False)
-
         self.RegexTargetMatch = False
         self.DirectoryFilter = []  # type: typing.List[typing.Tuple[bool, str]]
         self.NthMatch = None
@@ -355,6 +354,8 @@ class GoConfig:
         self.Rollover = False
         self.RolloverZero = False
         self.RepeatCount = None
+
+        self.ReloadConfig(False)
 
     def ReloadConfig(self, overwriteSettings: bool):
         path = self.ConfigFile
@@ -392,6 +393,9 @@ class GoConfig:
             self.TargetedExtensions.extend(targetedExtensions)
             self.TargetedDirectories.extend(targetedDirectories)
             self.IgnoredDirectories.extend(ignoredDirectories)
+
+        if "AlwaysYes" in config and config["AlwaysYes"]:
+            self.TryParseArgument("/yes")
 
     class ApplyElement:
         def __init__(self,
@@ -657,7 +661,7 @@ class GoConfig:
 
         return newArguments
 
-    _InlineMarkerRegex = re.compile(r"^%%(\d*)%%$", re.I)
+    _InlineMarkerRegex = re.compile(r"^%%(-?\d*)%%$", re.I)
 
     # todo search for in-quote markers too
     def _ProcessInlineMarker(self, argument: str) -> typing.Union[str, typing.List[str]]:
@@ -668,7 +672,7 @@ class GoConfig:
         if match.groups()[0]:
             applyIndex = int(match.groups()[0])
 
-            if applyIndex >= len(self.ApplyLists):
+            if applyIndex < -len(self.ApplyLists) or applyIndex >= len(self.ApplyLists):
                 return argument
 
             self._ApplyListsUsed[applyIndex] = True
@@ -883,7 +887,12 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
 
     if runs > 50 and not config.SuppressPrompts:
         print(">>>{0} lines present at source. continue? (Y/n)".format(runs))
-        answer = input()
+        answer = ""
+        try:
+            answer = input()
+        except EOFError:
+            print(">>>could not read stdin; use /yes to run")
+            exit(1)
 
         if len(answer) > 0 and answer[0] != 'y':
             exit()
