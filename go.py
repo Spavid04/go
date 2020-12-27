@@ -26,6 +26,7 @@ def PrintHelp():
     print("Added directories are searched recursively.")
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
     print("Set key \"AlwaysYes\" in the config file to always set /yes.")
+    print("Set key \"AlwaysQuiet\" in the config file to always set /quiet.")
     print()
     print("Avaliable go arguments:")
     print()
@@ -395,6 +396,8 @@ class GoConfig:
             self.IgnoredDirectories.extend(ignoredDirectories)
 
         if "AlwaysYes" in config and config["AlwaysYes"]:
+            self.TryParseArgument("/yes")
+        if "AlwaysQuiet" in config and config["AlwaysQuiet"]:
             self.TryParseArgument("/yes")
 
     class ApplyElement:
