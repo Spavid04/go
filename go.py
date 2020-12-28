@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import typing
+import shlex
 import sys
 import unicodedata
 
@@ -43,7 +44,7 @@ def PrintHelp():
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
     print("/echo         : Echoes the command to be run, including arguments, before running it.")
     print("/dry          : Marks runs as dry. Dry runs do not actually run the target executable.")
-    print("/list         : Alias for /echo and /dry.")
+    print("/list         : Alias for /echo + /dry.")
     print()
     print("/cd           : Runs the target in its directory, instead of the current one.")
     print("/elevate      : Requests elevation before running the target. Might break stdin/out/err pipes.")
@@ -917,7 +918,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
         if config.EchoTarget and not config.QuietGo:
-            print([target if not config.AsBatch else goTarget] + arguments)
+            print(shlex.quote(target if not config.AsBatch else goTarget) + " " + " ".join(shlex.quote(x) for x in arguments))
         if config.DryRun:
             continue
         if config.AsBatch:
