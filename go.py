@@ -1,4 +1,4 @@
-# VERSION 20.12.26.02
+# VERSION 20.12.28.01
 
 import ctypes
 import difflib
@@ -308,13 +308,14 @@ class Utils(object):
             suffix = ".bat"
             selfDelete = "(goto) 2>nul & del \"%~f0\""
         else:
-            echo = ""
+            echo = "set echo off" #does this even work
             suffix = ".sh"
-            selfDelete = ""
+            selfDelete = "rm -- \"$0\""
 
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=suffix, delete=False, newline=None) as f:
-            f.write(echo)
-            f.write("\n")
+            if echoOff:
+                f.write(echo)
+                f.write("\n")
 
             for r in list:
                 f.write(" ".join(r))
