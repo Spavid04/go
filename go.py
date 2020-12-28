@@ -1,4 +1,4 @@
-# VERSION 20.12.28.01
+# VERSION 20.12.28.02
 
 import ctypes
 import difflib
@@ -21,8 +21,7 @@ def PrintHelp():
     print("Run with /examples to print some usage examples.")
     print()
     print("By default, it only searches (non-recursively) in the %PATH% variable.")
-    print(
-        "Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
+    print("Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
     print("Config files are json files.")
     print("Added directories are searched recursively.")
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
@@ -33,20 +32,21 @@ def PrintHelp():
     print()
     print("/config-XXXX  : Uses the specified config file.")
     print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
-    print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list.")
+    print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list (recursive).")
     print("/ign[+-]XXXX  : Adds or removes the directory to the ignored directories list (recursive).")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
-    print("/in[+-]XXXX   : Add a path substring filter to choose ambiguous matches (in+ or [not]in-).")
+    print("/in[+-]XXXX   : Add a path substring filter to choose ambiguous matches (in+ or (not) in-).")
     print("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
     print("/echo         : Echoes the command to be run, including arguments, before running it.")
-    print("/dry          : Marks runs as dry. Dry runs do not actually run the target executable.")
+    print("/dry          : Does not actually run the target executable.")
     print("/list         : Alias for /echo + /dry.")
     print()
-    print("/cd           : Runs the target in its directory, instead of the current one.")
+    print("/cd           : Runs the target in the target's directory, instead of the current one.")
+    print("                Append a -[path] to execute in the specified directory")
     print("/elevate      : Requests elevation before running the target. Might break stdin/out/err pipes.")
     print("/nowait       : Does not wait for the started process to end. This implies /parallel.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
@@ -359,12 +359,13 @@ class GoConfig:
         self.DirectoryFilter = []  # type: typing.List[typing.Tuple[bool, str]]
         self.NthMatch = None
 
-        self.QuietGo = False  # todo
+        self.QuietGo = False
         self.EchoTarget = False
         self.DryRun = False
         self.SuppressPrompts = False
 
         self.ChangeWorkingDirectory = False
+        self.WorkingDirectory = None
         self.WaitForExit = True
         self.Parallel = False
         self.Batched = False
@@ -503,8 +504,11 @@ class GoConfig:
 
         elif lower == "/elevate":
             Utils.EnsureAdmin()
-        elif lower == "/cd":
+        elif lower.startswith("/cd"):
             self.ChangeWorkingDirectory = True
+            wd = argument[4:]
+            if wd:
+                self.WorkingDirectory = wd
         elif lower == "/nowait":
             self.WaitForExit = False
         elif lower == "/parallel":
@@ -936,6 +940,14 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         print(">>>target: {0}".format(target))
         sys.stdout.flush()
 
+    if config.ChangeWorkingDirectory:
+        if config.WorkingDirectory:
+            directory = config.WorkingDirectory
+        else:
+            directory = os.path.split(target)[0]
+    else:
+        directory = None
+
     asbatchArguments = []
 
     for run in range(runs):
@@ -950,7 +962,6 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
             asbatchArguments.append([goTarget] + arguments)
             continue
 
-        directory = os.path.split(target)[0] if config.ChangeWorkingDirectory else None
         subprocessArgs = {"args": [target] + arguments, "shell": True, "cwd": directory,
                           "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
 
