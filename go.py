@@ -54,7 +54,7 @@ def PrintHelp():
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
     print("/asbatch      : Passes all commands to the default shell interpreter, as a file. Incompatible with most modifiers.")
     print("                Appending a + after the argument will not disable shell echo. (/asbatch+)")
-    print("                Overrides the target to be run with the default shell interpreter.")
+    print("                Overrides the target to be run with the default shell interpreter, and allows for any target.")
     print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
@@ -70,9 +70,10 @@ def PrintHelp():
     print("                    I: reads the immediate string as a comma separated list, specified with *-text")
     print("                    P: reads the input lines from stdin")
     print("                Modifiers:")
-    print("                    +i:x      inserts the argument in the command at the specified 0-based index")
-    print("                    +ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
-    print("                    +r:regex  returns the first match using the specified regex")
+    print("                    e        shell-escapes the argument")
+    print("                    i:x      inserts the argument in the command at the specified 0-based index")
+    print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
+    print("                    r:regex  returns the first match using the specified regex")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
@@ -105,7 +106,7 @@ def PrintExamples():
     print("    dir /b | go /papply+[ss:-4:] cmd /c echo")
     print()
     print("Print only the extensions of all files in the current directory, read from stdin; not using [^.]+ due to parsing issues:")
-    print("dir /b | go /papply+[r:\\..+?$] cmd /c echo")
+    print("    dir /b | go /papply+[r:\\..+?$] cmd /c echo")
 
 
 class Utils(object):
@@ -324,6 +325,24 @@ class Utils(object):
 
             return f.name
 
+    @staticmethod
+    def EscapeForShell(text: str) -> str:
+        if os.name == "nt":
+            if not text or re.search(r"([\"\s])", text):
+                text = "\"" + text.replace("\"", r"\"") + "\""
+
+            meta_chars = "()%!^\"<>&|"
+            meta_re = re.compile("(" + "|".join(re.escape(char) for char in list(meta_chars)) + ")")
+            meta_map = {char: "^%s" % char for char in meta_chars}
+
+            def escape_meta_chars(m):
+                char = m.group(1)
+                return meta_map[char]
+
+            return meta_re.sub(escape_meta_chars, text)
+        else:
+            return shlex.quote(text)
+
 
 class GoConfig:
     _ApplyRegex = re.compile("^/([cfgip])apply(.*)$", re.I)
@@ -427,7 +446,7 @@ class GoConfig:
             action = lower[4]
             path = os.path.abspath(lower[5:])
 
-            if action == '-':
+            if action == "-":
                 if path in self.TargetedDirectories:
                     self.TargetedDirectories.remove(path)
             else:
@@ -437,7 +456,7 @@ class GoConfig:
             action = lower[4]
             path = os.path.abspath(lower[5:])
 
-            if action == '-':
+            if action == "-":
                 if path in self.IgnoredDirectories:
                     self.IgnoredDirectories.remove(path)
             else:
@@ -447,7 +466,7 @@ class GoConfig:
             action = lower[4]
             extension = lower[5:]
 
-            if action == '-':
+            if action == "-":
                 if extension in self.TargetedExtensions:
                     self.TargetedExtensions.remove(extension)
             else:
@@ -457,7 +476,7 @@ class GoConfig:
         elif lower == "/regex":
             self.RegexTargetMatch = True
         elif lower.startswith("/in"):
-            mode = True if lower[3] == '+' else False
+            mode = True if lower[3] == "+" else False
             substring = argument[4:]
 
             self.DirectoryFilter.append((mode, substring))
@@ -512,6 +531,8 @@ class GoConfig:
                     modifierText = match.group(1)
                     if m := re.match("i:(\\d+)", modifierText, re.I):
                         modifiers.append(("i", int(m.group(1))))
+                    elif modifierText == "e":
+                        modifiers.append(("e", None))
                     elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
                         x = m.group(1) or ""
                         y = m.group(3) or ""
@@ -577,16 +598,16 @@ class GoConfig:
         # region generate lists
 
         for applyArgument in self.ApplyLists:
-            if applyArgument.SourceType == 'c':
+            if applyArgument.SourceType == "c":
                 applyArgument.List = [x for x in Utils.GetClipboardText().split("\r\n") if len(x) > 0]
-            elif applyArgument.SourceType == 'p':
+            elif applyArgument.SourceType == "p":
                 applyArgument.List = Utils.ReadStdin()
-            elif applyArgument.SourceType == 'f':
+            elif applyArgument.SourceType == "f":
                 applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
-            elif applyArgument.SourceType == 'g':
+            elif applyArgument.SourceType == "g":
                 applyArgument.List = Utils.CaptureOutput(applyArgument.Source)
-            elif applyArgument.SourceType == 'i':
-                applyArgument.List = applyArgument.Source.split(',')
+            elif applyArgument.SourceType == "i":
+                applyArgument.List = applyArgument.Source.split(",")
 
         # endregion
 
@@ -594,7 +615,9 @@ class GoConfig:
 
         for applyArgument in self.ApplyLists:
             for modifier in applyArgument.Modifiers:
-                if modifier[0] == "ss":
+                if modifier[0] == "e":
+                    applyArgument.List = [Utils.EscapeForShell(x) for x in applyArgument.List]
+                elif modifier[0] == "ss":
                     applyArgument.List = [modifier[1](x) for x in applyArgument.List]
                 elif modifier[0] == "r":
                     regex = re.compile(modifier[1], re.I)
@@ -898,7 +921,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
             print(">>>could not read stdin; use /yes to run")
             exit(1)
 
-        if len(answer) > 0 and answer[0] != 'y':
+        if len(answer) > 0 and answer[0] != "y":
             exit()
 
     if config.AsBatch:
@@ -918,7 +941,8 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
         if config.EchoTarget and not config.QuietGo:
-            print(shlex.quote(target if not config.AsBatch else goTarget) + " " + " ".join(shlex.quote(x) for x in arguments))
+            print(Utils.EscapeForShell(target if not config.AsBatch else goTarget) + " " +
+                  " ".join(Utils.EscapeForShell(x) for x in arguments))
         if config.DryRun:
             continue
         if config.AsBatch:
