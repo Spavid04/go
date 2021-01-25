@@ -1,4 +1,4 @@
-# VERSION 20.12.28.02
+# VERSION 21.01.29.01
 
 import ctypes
 import difflib
@@ -889,7 +889,7 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
                 (directory, filename) = os.path.split(fuzzyMatch)
                 print(">>>    {0:24s} in {1}".format(filename, directory))
 
-        exit()
+        exit(-1)
 
     if len(exactMatches) > 1 and config.NthMatch is None:
         print(">>>multiple matches found!")
@@ -898,19 +898,19 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
             (directory, filename) = os.path.split(exactMatches[i])
             print(">>>[{0:2d}]    {1:24s} in {2}".format(i, filename, directory))
 
-        exit()
+        exit(-1)
 
     if len(exactMatches) > 1 and config.NthMatch is not None:
         if config.NthMatch >= len(exactMatches):
             print(">>>nth match index out of range!")
-            exit()
+            exit(-1)
 
         return exactMatches[config.NthMatch]
 
     return exactMatches[0]
 
 
-def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.List[str]]):
+def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.List[str]]) -> typing.Optional[int]:
     runs = 1
     if config.RepeatCount is not None and len(targetArguments) == 0:
         runs = config.RepeatCount
@@ -924,10 +924,10 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
             answer = input()
         except EOFError:
             print(">>>could not read stdin; use /yes to run")
-            exit(1)
+            exit(-1)
 
         if len(answer) > 0 and answer[0] != "y":
-            exit()
+            exit(-1)
 
     if config.AsBatch:
         target = GetDesiredMatchOrExit(config, "cmd.exe")
@@ -968,7 +968,9 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         if config.Parallel:
             parallelRunner.EnqueueRun(subprocessArgs)
         else:
-            runMethod(**subprocessArgs)
+            result = runMethod(**subprocessArgs)
+            if config.WaitForExit:
+                return result.returncode
 
     if config.Parallel and not config.DryRun:
         parallelRunner.Start()
@@ -976,13 +978,15 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         tempbatchPath = Utils.CreateBatchFile(asbatchArguments, config.EchoOff)
         subprocessArgs = {"args": [tempbatchPath], "shell": True,
                           "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
-        runMethod(**subprocessArgs)
+        result = runMethod(**subprocessArgs)
+        if config.WaitForExit:
+            return result.returncode
 
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
         PrintHelp()
-        exit()
+        exit(0)
 
     Configuration = GoConfig()
 
@@ -997,10 +1001,11 @@ if __name__ == "__main__":
         exit()
 
     if not Configuration.Validate():
-        exit()
+        exit(-1)
 
     target = sys.argv[i]
     targetArguments = sys.argv[i + 1:]
     targetArguments = Configuration.ProcessApplyArguments(targetArguments)
 
-    Run(Configuration, target, targetArguments)
+    result = Run(Configuration, target, targetArguments)
+    exit(result or 0)
