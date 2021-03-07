@@ -1,4 +1,4 @@
-# VERSION 21.03.07.02
+# VERSION 21.03.07.03
 
 import ctypes
 import difflib
@@ -49,13 +49,14 @@ def PrintHelp():
     print("/cd           : Runs the target in the target's directory, instead of the current one.")
     print("                Append a -[path] to execute in the specified directory")
     print("/elevate      : Requests elevation before running the target. Might break stdin/out/err pipes.")
-    print("/fork         : Does not wait for the started process to end. This implies /parallel.")
+    print("/fork         : Does not wait for the started process to end.")
+    print("/detach       : Detaches child processes, but can create unwanted windows. Usually used with /fork.")
     print("/waitfor-XX   : Delays execution until after the specified process (PID) has stopped running. Can be repeated.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
-    print("/asbatch      : Passes all commands to the default shell interpreter, as a file. Incompatible with most modifiers.")
-    print("                Appending a + after the argument will not disable shell echo. (/asbatch+)")
+    print("/asscript     : Passes all commands to the default shell interpreter, as a file. Incompatible with most modifiers.")
+    print("                Appending a + after the argument will not disable shell echo. (/asscript+)")
     print("                Overrides the target to be run with the default shell interpreter, and allows for any target.")
     print("/unsafe       : Run the command as a simple string, and don't escape anything if possible.")
     print()
@@ -115,7 +116,7 @@ def PrintExamples():
     print("    dir /b | go /papply+[r:\\..+?$] cmd /c echo")
     print()
     print("Concatenate files using cmd's copy and go's format+flatten:")
-    print("    dir /b *.bin | go /asbatch /papply+[f:\\\"%%%%\\\"]+[fl:+] copy /b %%%% out.bin")
+    print("    dir /b *.bin | go /asscript /papply+[f:\\\"%%%%\\\"]+[fl:+] copy /b %%%% out.bin")
 
 
 class Utils(object):
@@ -311,7 +312,7 @@ class Utils(object):
             yield list[i:min(i + batchSize, length)]
 
     @staticmethod
-    def CreateBatchFile(list: typing.List[typing.List[str]], echoOff: bool) -> str:
+    def CreateScriptFile(list: typing.List[typing.List[str]], echoOff: bool) -> str:
         if os.name == "nt":
             echo = "@echo off"
             suffix = ".bat"
@@ -394,11 +395,12 @@ class GoConfig:
         self.ChangeWorkingDirectory = False
         self.WorkingDirectory = None
         self.WaitForExit = True
+        self.Detach = False
         self.WaitFor = []
         self.Parallel = False
         self.Batched = False
         self.ParallelLimit = None
-        self.AsBatch = False
+        self.AsShellScript = False
         self.EchoOff = True
         self.Unsafe = False
 
@@ -540,6 +542,8 @@ class GoConfig:
                 self.WorkingDirectory = wd
         elif lower == "/fork":
             self.WaitForExit = False
+        elif lower == "/detach":
+            self.Detach = True
         elif lower.startswith("/waitfor-"):
             self.WaitFor.append(int(lower[9:]))
         elif lower == "/parallel":
@@ -548,8 +552,8 @@ class GoConfig:
             self.Batched = True
         elif lower.startswith("/limit-"):
             self.ParallelLimit = int(lower[7:])
-        elif lower.startswith("/asbatch"):
-            self.AsBatch = True
+        elif lower.startswith("/asscript"):
+            self.AsShellScript = True
             if "+" in lower:
                 self.EchoOff = False
         elif lower == "/unsafe":
@@ -617,8 +621,9 @@ class GoConfig:
             print(">>>/batch requires /limit to be specified")
             return False
 
-        if self.AsBatch and (self.Parallel):
-            print(">>>/asbatch cannot be used with /parallel")
+        if self.AsShellScript and self.Parallel:
+            if not self.QuietGo:
+                print(">>>/asscript cannot be used with /parallel")
 
         return True
 
@@ -999,7 +1004,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         if len(answer) > 0 and answer[0] != "y":
             exit(-1)
 
-    if config.AsBatch:
+    if config.AsShellScript:
         target = GetDesiredMatchOrExit(config, "cmd.exe")
     else:
         target = GetDesiredMatchOrExit(config, goTarget)
@@ -1008,8 +1013,13 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
     stdin = sys.stdin if config.WaitForExit else subprocess.DEVNULL
     stdout = sys.stdout if config.WaitForExit else subprocess.DEVNULL
     stderr = sys.stderr if config.WaitForExit else subprocess.DEVNULL
-    flags = 0 if config.WaitForExit else subprocess.CREATE_NEW_PROCESS_GROUP
-    asbatchArguments = []
+    flags = 0
+    asscriptArguments = []
+
+    if not config.WaitForExit:
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    if config.Detach:
+        flags |= subprocess.DETACHED_PROCESS
 
     if not config.QuietGo:
         print(">>>target: {0}".format(target))
@@ -1028,14 +1038,14 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
 
         if config.EchoTarget and not config.QuietGo:
             if config.Unsafe:
-                print((target if not config.AsBatch else goTarget) + " " + " ".join(arguments))
+                print((target if not config.AsShellScript else goTarget) + " " + " ".join(arguments))
             else:
-                print(Utils.EscapeForShell(target if not config.AsBatch else goTarget) + " " +
+                print(Utils.EscapeForShell(target if not config.AsShellScript else goTarget) + " " +
                       " ".join(Utils.EscapeForShell(x) for x in arguments))
         if config.DryRun:
             continue
-        if config.AsBatch:
-            asbatchArguments.append([goTarget] + arguments)
+        if config.AsShellScript:
+            asscriptArguments.append([goTarget] + arguments)
             continue
 
         if config.Unsafe:
@@ -1058,9 +1068,9 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
 
     if config.Parallel:
         parallelRunner.Start()
-    if config.AsBatch:
-        tempbatchPath = Utils.CreateBatchFile(asbatchArguments, config.EchoOff)
-        subprocessArgs = {"args": [tempbatchPath], "shell": True, "cwd": directory, "creationflags": flags,
+    if config.AsShellScript:
+        tempscriptPath = Utils.CreateScriptFile(asscriptArguments, config.EchoOff)
+        subprocessArgs = {"args": [tempscriptPath], "shell": True, "cwd": directory, "creationflags": flags,
                           "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
         result = runMethod(**subprocessArgs)
         if config.WaitForExit:
