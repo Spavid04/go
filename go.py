@@ -1,9 +1,10 @@
-# VERSION 21.03.07.01
+# VERSION 21.03.07.02
 
 import ctypes
 import difflib
 import json
 import os
+import psutil
 import re
 import subprocess
 import tempfile
@@ -48,7 +49,8 @@ def PrintHelp():
     print("/cd           : Runs the target in the target's directory, instead of the current one.")
     print("                Append a -[path] to execute in the specified directory")
     print("/elevate      : Requests elevation before running the target. Might break stdin/out/err pipes.")
-    print("/nowait       : Does not wait for the started process to end. This implies /parallel.")
+    print("/fork         : Does not wait for the started process to end. This implies /parallel.")
+    print("/waitfor-XX   : Delays execution until after the specified process (PID) has stopped running. Can be repeated.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
@@ -351,6 +353,24 @@ class Utils(object):
         else:
             return shlex.quote(text)
 
+    @staticmethod
+    def WaitForProcesses(pids: typing.List[int], quiet: bool):
+        exited = [False]*len(pids)
+        if not quiet:
+            print("Waiting for: " + ", ".join(str(x) for x in pids))
+
+        while not all(exited):
+            for i in range(len(pids)):
+                if exited[i]:
+                    continue
+
+                exists = psutil.pid_exists(pids[i])
+                if not exists:
+                    exited[i] = True
+                    if not quiet:
+                        print(str(pids[i]) + " exited")
+            time.sleep(0.1)
+
 
 class GoConfig:
     _ApplyRegex = re.compile("^/([cfgip])apply(.*)$", re.I)
@@ -374,6 +394,7 @@ class GoConfig:
         self.ChangeWorkingDirectory = False
         self.WorkingDirectory = None
         self.WaitForExit = True
+        self.WaitFor = []
         self.Parallel = False
         self.Batched = False
         self.ParallelLimit = None
@@ -517,8 +538,10 @@ class GoConfig:
             wd = argument[4:]
             if wd:
                 self.WorkingDirectory = wd
-        elif lower == "/nowait":
+        elif lower == "/fork":
             self.WaitForExit = False
+        elif lower.startswith("/waitfor-"):
+            self.WaitFor.append(int(lower[9:]))
         elif lower == "/parallel":
             self.Parallel = True
         elif lower == "/batch":
@@ -588,7 +611,7 @@ class GoConfig:
     def Validate(self) -> bool:
         if self.Parallel and not self.WaitForExit:
             if not self.QuietGo:
-                print(">>>/nowait doesn't do anything with /parallel")
+                print(">>>/fork doesn't do anything with /parallel")
 
         if self.Batched and not self.ParallelLimit:
             print(">>>/batch requires /limit to be specified")
@@ -982,6 +1005,10 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         target = GetDesiredMatchOrExit(config, goTarget)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
     runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
+    stdin = sys.stdin if config.WaitForExit else subprocess.DEVNULL
+    stdout = sys.stdout if config.WaitForExit else subprocess.DEVNULL
+    stderr = sys.stderr if config.WaitForExit else subprocess.DEVNULL
+    flags = 0 if config.WaitForExit else subprocess.CREATE_NEW_PROCESS_GROUP
     asbatchArguments = []
 
     if not config.QuietGo:
@@ -1016,8 +1043,8 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         else:
             runArgument = [target] + arguments
 
-        subprocessArgs = {"args": runArgument, "shell": True, "cwd": directory,
-                          "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
+        subprocessArgs = {"args": runArgument, "shell": True, "cwd": directory, "creationflags": flags,
+                          "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
 
         if config.Parallel:
             parallelRunner.EnqueueRun(subprocessArgs)
@@ -1033,8 +1060,8 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         parallelRunner.Start()
     if config.AsBatch:
         tempbatchPath = Utils.CreateBatchFile(asbatchArguments, config.EchoOff)
-        subprocessArgs = {"args": [tempbatchPath], "shell": True, "cwd": directory,
-                          "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
+        subprocessArgs = {"args": [tempbatchPath], "shell": True, "cwd": directory, "creationflags": flags,
+                          "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
         result = runMethod(**subprocessArgs)
         if config.WaitForExit:
             return result.returncode
@@ -1059,6 +1086,9 @@ if __name__ == "__main__":
 
     if not Configuration.Validate():
         exit(-1)
+
+    if Configuration.WaitFor:
+        Utils.WaitForProcesses(Configuration.WaitFor, Configuration.QuietGo)
 
     target = sys.argv[i]
     targetArguments = sys.argv[i + 1:]
