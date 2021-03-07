@@ -1,4 +1,4 @@
-# VERSION 21.01.29.01
+# VERSION 21.03.07.01
 
 import ctypes
 import difflib
@@ -55,25 +55,29 @@ def PrintHelp():
     print("/asbatch      : Passes all commands to the default shell interpreter, as a file. Incompatible with most modifiers.")
     print("                Appending a + after the argument will not disable shell echo. (/asbatch+)")
     print("                Overrides the target to be run with the default shell interpreter, and allows for any target.")
+    print("/unsafe       : Run the command as a simple string, and don't escape anything if possible.")
     print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
     print("                + (default) and - control whether to repeat source lists that are smaller, or to pass empty.")
-    print("/[cfgip]apply : For every line in the specified source, runs the target with the line added as arguments.")
+    print("/[type]apply  : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
-    print("                One of either C(lipboard), F(ile), G(o), I(mmediate) or P(ipe) must be specified.")
+    print("                A type must be specified.")
     print("                Can accept a number of modifiers with +[modifier] before any arguments.")
     print("                Types of apply:")
-    print("                    C: reads the input from the clipboard")
+    print("                    C: reads the input text from the clipboard as lines")
     print("                    F: reads the lines of a file, specified with *-path")
     print("                    G: reads the output lines of a go command, specified with *-command")
     print("                    I: reads the immediate string as a comma separated list, specified with *-text")
-    print("                    P: reads the input lines from stdin")
+    print("                    P: reads the input lines from stdin until EOF")
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
+    print("                    f:fmt    format the string; %%%% is the argument")
+    print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
+    print("                             if none, the argument list gets flattened to multiple arguments, and must be last")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
-    print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
     print("                    r:regex  returns the first match using the specified regex")
+    print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
@@ -107,6 +111,9 @@ def PrintExamples():
     print()
     print("Print only the extensions of all files in the current directory, read from stdin; not using [^.]+ due to parsing issues:")
     print("    dir /b | go /papply+[r:\\..+?$] cmd /c echo")
+    print()
+    print("Concatenate files using cmd's copy and go's format+flatten:")
+    print("    dir /b *.bin | go /asbatch /papply+[f:\\\"%%%%\\\"]+[fl:+] copy /b %%%% out.bin")
 
 
 class Utils(object):
@@ -372,6 +379,7 @@ class GoConfig:
         self.ParallelLimit = None
         self.AsBatch = False
         self.EchoOff = True
+        self.Unsafe = False
 
         self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
         self.Rollover = False
@@ -521,6 +529,8 @@ class GoConfig:
             self.AsBatch = True
             if "+" in lower:
                 self.EchoOff = False
+        elif lower == "/unsafe":
+            self.Unsafe = True
 
         elif GoConfig._ApplyRegex.match(lower):
             groups = GoConfig._ApplyRegex.match(lower).groups()
@@ -538,6 +548,11 @@ class GoConfig:
                         modifiers.append(("i", int(m.group(1))))
                     elif modifierText == "e":
                         modifiers.append(("e", None))
+                    elif m := re.match("f:(.+)", modifierText, re.I):
+                        modifiers.append(("f", m.group(1)))
+                    elif m := re.match("fl:?(.+)?", modifierText, re.I):
+                        separator = None if (m.group(1) is None and ":" not in modifierText) else m.group(1)
+                        modifiers.append(("fl", separator))
                     elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
                         x = m.group(1) or ""
                         y = m.group(3) or ""
@@ -622,6 +637,20 @@ class GoConfig:
             for modifier in applyArgument.Modifiers:
                 if modifier[0] == "e":
                     applyArgument.List = [Utils.EscapeForShell(x) for x in applyArgument.List]
+                elif modifier[0] == "f":
+                    markerReplaceRegex = re.compile("(?:^|(?<=[^%]))(%%%%)(?=[^%]|$)")
+                    newlist = []
+                    for arg in applyArgument.List:
+                        newlist.append(markerReplaceRegex.sub(
+                            lambda _: arg,
+                            modifier[1]
+                        ))
+                    applyArgument.List = newlist
+                elif modifier[0] == "fl":
+                    if modifier[1] is not None:
+                        applyArgument.List = [modifier[1].join(applyArgument.List)]
+                    else:
+                        applyArgument.List = [applyArgument.List]
                 elif modifier[0] == "ss":
                     applyArgument.List = [modifier[1](x) for x in applyArgument.List]
                 elif modifier[0] == "r":
@@ -688,6 +717,24 @@ class GoConfig:
         for i in range(len(self.ApplyLists)):
             if not self._ApplyListsUsed[i]:
                 newArguments.append(self.ApplyLists[i].List)
+
+        # endregion
+
+        # region flatten expanded lists
+
+        i = 0
+        while i < len(newArguments):
+            arg = newArguments[i]
+
+            if isinstance(arg[0], list):
+                newArguments.pop(i)
+                for j in range(len(arg[0])):
+                    flattened = []
+                    for k in arg:
+                        flattened.append(k[j])
+                    newArguments.insert(i, flattened)
+                    i += 1
+            i += 1
 
         # endregion
 
@@ -935,6 +982,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         target = GetDesiredMatchOrExit(config, goTarget)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
     runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
+    asbatchArguments = []
 
     if not config.QuietGo:
         print(">>>target: {0}".format(target))
@@ -948,35 +996,44 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
     else:
         directory = None
 
-    asbatchArguments = []
-
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
         if config.EchoTarget and not config.QuietGo:
-            print(Utils.EscapeForShell(target if not config.AsBatch else goTarget) + " " +
-                  " ".join(Utils.EscapeForShell(x) for x in arguments))
+            if config.Unsafe:
+                print((target if not config.AsBatch else goTarget) + " " + " ".join(arguments))
+            else:
+                print(Utils.EscapeForShell(target if not config.AsBatch else goTarget) + " " +
+                      " ".join(Utils.EscapeForShell(x) for x in arguments))
         if config.DryRun:
             continue
         if config.AsBatch:
             asbatchArguments.append([goTarget] + arguments)
             continue
 
-        subprocessArgs = {"args": [target] + arguments, "shell": True, "cwd": directory,
+        if config.Unsafe:
+            runArgument = target + " " + " ".join(arguments)
+        else:
+            runArgument = [target] + arguments
+
+        subprocessArgs = {"args": runArgument, "shell": True, "cwd": directory,
                           "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
 
         if config.Parallel:
             parallelRunner.EnqueueRun(subprocessArgs)
         else:
             result = runMethod(**subprocessArgs)
-            if config.WaitForExit:
+            if config.WaitForExit and runs == 1:
                 return result.returncode
 
-    if config.Parallel and not config.DryRun:
+    if config.DryRun:
+        return 0
+
+    if config.Parallel:
         parallelRunner.Start()
     if config.AsBatch:
         tempbatchPath = Utils.CreateBatchFile(asbatchArguments, config.EchoOff)
-        subprocessArgs = {"args": [tempbatchPath], "shell": True,
+        subprocessArgs = {"args": [tempbatchPath], "shell": True, "cwd": directory,
                           "stdin": sys.stdin, "stdout": sys.stdout, "stderr": sys.stderr}
         result = runMethod(**subprocessArgs)
         if config.WaitForExit:
