@@ -1,4 +1,4 @@
-# VERSION 21.03.07.03
+# VERSION 21.04.01.01
 
 import ctypes
 import difflib
@@ -121,12 +121,20 @@ def PrintExamples():
 
 class Utils(object):
     @staticmethod
-    def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str], recursive: bool) -> \
+    def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str], recursive: bool,
+                                 ignoredDirectories: typing.Optional[typing.List[str]] = None) -> \
             typing.List[str]:
         matchingFiles = []
 
-        for directory in directories:
-            for (root, _, files) in os.walk(directory):
+        for targetedDirectory in directories:
+            for (root, dirs, files) in os.walk(targetedDirectory, topdown=True):
+                if recursive and ignoredDirectories:
+                    dirs_copy = list(dirs)
+                    for dir in dirs_copy:
+                        abspath = os.path.abspath(os.path.join(root, dir))
+                        if any(os.path.samefile(abspath, x) for x in ignoredDirectories):
+                            dirs.remove(dir)
+
                 for file in files:
                     (_, extension) = os.path.splitext(file)
                     extension = extension.lower()
@@ -627,17 +635,6 @@ class GoConfig:
 
         return True
 
-    def FetchFiles(self) -> typing.List[str]:
-        files = []
-
-        files = Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), self.TargetedExtensions, False)
-
-        for file in Utils.ParseDirectoriesForFiles(self.TargetedDirectories, self.TargetedExtensions, True):
-            if file not in files:
-                files.append(file)
-
-        return files
-
     def ProcessApplyArguments(self, targetArguments: typing.List[str]) -> typing.List[typing.List[str]]:
         if len(self.ApplyLists) == 0:
             repeat = 1 if self.RepeatCount is None else self.RepeatCount
@@ -911,9 +908,12 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     if os.path.abspath(target).lower() == target.lower():
         return ([target], [])
 
-    allFiles = config.FetchFiles()
-    similarities = []
+    allFiles = set(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False))
+    for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True, config.IgnoredDirectories):
+        if file not in allFiles:
+            allFiles.add(file)
 
+    similarities = []
     for file in allFiles:
         passedThrough = True
 
@@ -923,16 +923,6 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
 
             if (include and directoryFilter.lower() not in directory) or \
                     (not include and directoryFilter.lower() in directory):
-                passedThrough = False
-                break
-
-        if not passedThrough:
-            continue
-
-        passedThrough = True
-
-        for ignoredDirectory in config.IgnoredDirectories:
-            if ignoredDirectory.lower() in file.lower():
                 passedThrough = False
                 break
 
