@@ -1,4 +1,4 @@
-# VERSION 21.04.01.01
+# VERSION 21.04.06.01
 
 import ctypes
 import difflib
@@ -28,6 +28,7 @@ def PrintHelp():
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
     print("Set key \"AlwaysYes\" in the config file to always set /yes.")
     print("Set key \"AlwaysQuiet\" in the config file to always set /quiet.")
+    print("You can also create a \".goignore\" file listing plain names in a directory, and go will ignore those files/directories.")
     print()
     print("Avaliable go arguments:")
     print()
@@ -128,6 +129,21 @@ class Utils(object):
 
         for targetedDirectory in directories:
             for (root, dirs, files) in os.walk(targetedDirectory, topdown=True):
+                if ".goignore" in files:
+                    with open(os.path.join(root, ".goignore"), "r") as f:
+                        goignoreIgnores = f.read().splitlines()
+                        goignoreIgnores = [os.path.normcase(x) for x in goignoreIgnores]
+
+                    dirs_copy = list(dirs)
+                    for dir in dirs_copy:
+                        if any(os.path.normcase(dir) == x for x in goignoreIgnores):
+                            dirs.remove(dir)
+                    files_copy = list(files)
+                    for file in files_copy:
+                        if any(os.path.normcase(file) == x for x in goignoreIgnores):
+                            files.remove(file)
+                    files.remove(".goignore")
+
                 if recursive and ignoredDirectories:
                     dirs_copy = list(dirs)
                     for dir in dirs_copy:
