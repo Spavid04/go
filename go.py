@@ -1,4 +1,4 @@
-# VERSION 21.04.06.01
+# VERSION 21.04.07.01
 
 import ctypes
 import difflib
@@ -910,24 +910,29 @@ class ParallelRunner:
 def unique(lst: typing.List[str]) -> typing.List[str]:
     temp = {}
 
-    for item in lst:
+    for i in range(len(lst)):
+        item = lst[i]
+
         key = os.path.normcase(item)
         if key in temp:
             continue
 
-        temp[key] = item
+        temp[key] = (i, item)
 
-    return list(temp.values())
+    asList = list(temp.values())
+    asList.sort(key=lambda x: x[0])
+    return [x[1] for x in asList]
 
 
 def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[typing.List[str], typing.List[str]]:
     if os.path.abspath(target).lower() == target.lower():
         return ([target], [])
 
-    allFiles = set(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False))
+    allFiles = Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False)
     for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True, config.IgnoredDirectories):
         if file not in allFiles:
-            allFiles.add(file)
+            allFiles.append(file)
+    allFiles = unique(allFiles)
 
     similarities = []
     for file in allFiles:
@@ -954,7 +959,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     fuzzyMatches = fuzzyMatches[:5]
     fuzzyMatches = [x[0] for x in fuzzyMatches]
 
-    return (unique(exactMatches), unique(fuzzyMatches))
+    return (exactMatches, fuzzyMatches)
 
 
 def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
@@ -977,7 +982,7 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
 
         for i in range(len(exactMatches)):
             (directory, filename) = os.path.split(exactMatches[i])
-            print(">>>[{0:2d}]    {1:24s} in {2}".format(i, filename, directory))
+            print(">>> [{0:2d}]\t{1:20s}\tin {2}".format(i, filename, directory))
 
         exit(-1)
 
