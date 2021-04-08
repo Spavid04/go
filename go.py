@@ -1,7 +1,8 @@
-# VERSION 21.04.07.01
+# VERSION 21.04.08.01
 
 import ctypes
 import difflib
+import itertools
 import json
 import os
 import psutil
@@ -64,10 +65,11 @@ def PrintHelp():
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
     print("                + (default) and - control whether to repeat source lists that are smaller, or to pass empty.")
+    print("/crossjoin    : Cross-joins all apply lists, resulting in all possible argument combinations.")
     print("/[type]apply  : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
     print("                A type must be specified.")
-    print("                Can accept a number of modifiers with +[modifier] before any arguments.")
+    print("                Accepts a number of modifiers with +[modifier], before any apply-specific arguments.")
     print("                Types of apply:")
     print("                    C: reads the input text from the clipboard as lines")
     print("                    F: reads the lines of a file, specified with *-path")
@@ -76,7 +78,8 @@ def PrintHelp():
     print("                    P: reads the input lines from stdin until EOF")
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
-    print("                    f:fmt    format the string; %%%% is the argument")
+    print("                    f:fmt    format the string using a standard printf format")
+    print("                    fi/f:fmt same as f:fmt modifier, but treats input as ints or floats")
     print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
     print("                             if none, the argument list gets flattened to multiple arguments, and must be last")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
@@ -117,7 +120,7 @@ def PrintExamples():
     print("    dir /b | go /papply+[r:\\..+?$] cmd /c echo")
     print()
     print("Concatenate files using cmd's copy and go's format+flatten:")
-    print("    dir /b *.bin | go /asscript /papply+[f:\\\"%%%%\\\"]+[fl:+] copy /b %%%% out.bin")
+    print("    dir /b *.bin | go /asscript /papply+[f:\\\"%s\\\"]+[fl:+] copy /b %%%% out.bin")
 
 
 class Utils(object):
@@ -432,6 +435,7 @@ class GoConfig:
         self.Rollover = False
         self.RolloverZero = False
         self.RepeatCount = None
+        self.CrossJoin = False
 
         self.ReloadConfig(False)
 
@@ -599,8 +603,8 @@ class GoConfig:
                         modifiers.append(("i", int(m.group(1))))
                     elif modifierText == "e":
                         modifiers.append(("e", None))
-                    elif m := re.match("f:(.+)", modifierText, re.I):
-                        modifiers.append(("f", m.group(1)))
+                    elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
+                        modifiers.append((m.group(1), m.group(2)))
                     elif m := re.match("fl:?(.+)?", modifierText, re.I):
                         separator = None if (m.group(1) is None and ":" not in modifierText) else m.group(1)
                         modifiers.append(("fl", separator))
@@ -630,6 +634,8 @@ class GoConfig:
                 self.RolloverZero = True
         elif lower.startswith("/repeat-"):
             self.RepeatCount = int(lower[8:])
+        elif lower == "/crossjoin":
+            self.CrossJoin = True
 
         else:
             return False
@@ -648,6 +654,10 @@ class GoConfig:
         if self.AsShellScript and self.Parallel:
             if not self.QuietGo:
                 print(">>>/asscript cannot be used with /parallel")
+
+        if self.CrossJoin and (self.RepeatCount or self.Rollover):
+            print(">>>/crossjoin cannot be used either /rollover or /repeat")
+            return False
 
         return True
 
@@ -675,27 +685,27 @@ class GoConfig:
         # region process modifiers
 
         for applyArgument in self.ApplyLists:
-            for modifier in applyArgument.Modifiers:
-                if modifier[0] == "e":
+            for (modifierType, modifierArgument) in applyArgument.Modifiers:
+                if modifierType == "e":
                     applyArgument.List = [Utils.EscapeForShell(x) for x in applyArgument.List]
-                elif modifier[0] == "f":
-                    markerReplaceRegex = re.compile("(?:^|(?<=[^%]))(%%%%)(?=[^%]|$)")
-                    newlist = []
-                    for arg in applyArgument.List:
-                        newlist.append(markerReplaceRegex.sub(
-                            lambda _: arg,
-                            modifier[1]
-                        ))
-                    applyArgument.List = newlist
-                elif modifier[0] == "fl":
-                    if modifier[1] is not None:
-                        applyArgument.List = [modifier[1].join(applyArgument.List)]
+                elif modifierType in {"f", "fi", "ff"}:
+                    convertFunc = lambda x: x
+                    if modifierType == "fi":
+                        convertFunc = lambda x: int(x)
+                    elif modifierType == "ff":
+                        convertFunc = lambda x: float(x)
+
+                    for i in range(len(applyArgument.List)):
+                        applyArgument.List[i] = modifierArgument % convertFunc(applyArgument.List[i])
+                elif modifierType == "fl":
+                    if modifierArgument is not None:
+                        applyArgument.List = [modifierArgument.join(applyArgument.List)]
                     else:
                         applyArgument.List = [applyArgument.List]
-                elif modifier[0] == "ss":
-                    applyArgument.List = [modifier[1](x) for x in applyArgument.List]
-                elif modifier[0] == "r":
-                    regex = re.compile(modifier[1], re.I)
+                elif modifierType == "ss":
+                    applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
+                elif modifierType == "r":
+                    regex = re.compile(modifierArgument, re.I)
                     for i in range(len(applyArgument.List)):
                         match = regex.match(applyArgument.List[i])
                         if match:
@@ -725,6 +735,13 @@ class GoConfig:
                 else:
                     while len(applyArgument.List) < maxOriginalLength:
                         applyArgument.List.extend(applyArgument.List[:originalLength])
+
+        if self.CrossJoin:
+            crossjoined = itertools.product(*[x.List for x in self.ApplyLists])
+            crossjoined = list(map(list, zip(*crossjoined))) # transpose
+
+            for i in range(len(self.ApplyLists)):
+                self.ApplyLists[i].List = crossjoined[i]
 
         minLength = min(len(x.List) for x in self.ApplyLists)
 
