@@ -1,4 +1,4 @@
-# VERSION 21.04.08.01
+# VERSION 21.04.08.02
 
 import ctypes
 import difflib
@@ -76,6 +76,7 @@ def PrintHelp():
     print("                    G: reads the output lines of a go command, specified with *-command")
     print("                    I: reads the immediate string as a comma separated list, specified with *-text")
     print("                    P: reads the input lines from stdin until EOF")
+    print("                    R: generates a range of numbers and accepts 1 to 3 parameters (see python's range())")
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
     print("                    f:fmt    format the string using a standard printf format")
@@ -112,6 +113,9 @@ def PrintExamples():
     print()
     print("Explicitly set apply argument position with inline markers:")
     print("    go /iapply-\"3,4\" /iapply-\"1,2\" cmd /c echo %%1%% %%0%%")
+    print()
+    print("Generate all integers between 0 and 100, and format them as a 0 padded 3 digit number:")
+    print("    go /rapply+[fi:%03d]-1,100 cmd /c echo")
     print()
     print("Print last 4 characters of all files in the current directory, read from stdin:")
     print("    dir /b | go /papply+[ss:-4:] cmd /c echo")
@@ -401,7 +405,7 @@ class Utils(object):
 
 
 class GoConfig:
-    _ApplyRegex = re.compile("^/([cfgip])apply(.*)$", re.I)
+    _ApplyRegex = re.compile("^/([cfgipr])apply(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -679,6 +683,10 @@ class GoConfig:
                 applyArgument.List = Utils.CaptureOutput(applyArgument.Source)
             elif applyArgument.SourceType == "i":
                 applyArgument.List = applyArgument.Source.split(",")
+            elif applyArgument.SourceType == "r":
+                rangeArgumentsRegex = re.compile("-?\\d+(\\.\\d+)?(,-?\\d+(\\.\\d+)?){0,2}", re.I)
+                if rangeArgumentsRegex.match(applyArgument.Source):
+                    applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
 
         # endregion
 
