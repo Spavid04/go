@@ -1,11 +1,11 @@
-# VERSION 21.04.08.02
+# VERSION 21.04.08.03
 
 import ctypes
 import difflib
 import itertools
 import json
 import os
-import psutil
+# import psutil # lazily imported
 import re
 import subprocess
 import tempfile
@@ -387,6 +387,13 @@ class Utils(object):
 
     @staticmethod
     def WaitForProcesses(pids: typing.List[int], quiet: bool):
+        if "psutil" not in sys.modules:
+            try:
+                import psutil
+            except ModuleNotFoundError:
+                print(">>>psutil module not found; /waitfor will not work!")
+                return
+
         exited = [False]*len(pids)
         if not quiet:
             print("Waiting for: " + ", ".join(str(x) for x in pids))
