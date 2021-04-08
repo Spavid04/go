@@ -1,4 +1,4 @@
-# VERSION 21.04.08.03
+# VERSION 21.04.08.04
 
 import ctypes
 import difflib
@@ -691,7 +691,7 @@ class GoConfig:
             elif applyArgument.SourceType == "i":
                 applyArgument.List = applyArgument.Source.split(",")
             elif applyArgument.SourceType == "r":
-                rangeArgumentsRegex = re.compile("-?\\d+(\\.\\d+)?(,-?\\d+(\\.\\d+)?){0,2}", re.I)
+                rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
                     applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
 
