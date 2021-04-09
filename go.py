@@ -1,7 +1,8 @@
-# VERSION 21.04.08.04
+# VERSION 21.04.09.01
 
 import ctypes
 import difflib
+import fnmatch
 import itertools
 import json
 import os
@@ -29,7 +30,9 @@ def PrintHelp():
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
     print("Set key \"AlwaysYes\" in the config file to always set /yes.")
     print("Set key \"AlwaysQuiet\" in the config file to always set /quiet.")
-    print("You can also create a \".goignore\" file listing plain names in a directory, and go will ignore those files/directories.")
+    print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
+    print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
+    print("  whether to include or ignore matches.")
     print()
     print("Avaliable go arguments:")
     print()
@@ -134,22 +137,34 @@ class Utils(object):
             typing.List[str]:
         matchingFiles = []
 
-        for targetedDirectory in directories:
+        directoriesQueue = list(directories)
+        while directoriesQueue:
+            targetedDirectory = directoriesQueue.pop(0)
+
             for (root, dirs, files) in os.walk(targetedDirectory, topdown=True):
-                if ".goignore" in files:
-                    with open(os.path.join(root, ".goignore"), "r") as f:
-                        goignoreIgnores = f.read().splitlines()
-                        goignoreIgnores = [os.path.normcase(x) for x in goignoreIgnores]
+                if ".gofilter" in files:
+                    files.remove(".gofilter")
+
+                    with open(os.path.join(root, ".gofilter"), "r") as f:
+                        gofilterFilters = f.read().splitlines()
+
+                    gofilterIgnores = []
+                    for filter in gofilterFilters:
+                        if filter[0] == "+":
+                            directoriesQueue.append(os.path.join(root, os.path.normcase(filter[1:])))
+                        elif filter[0] == "-":
+                            gofilterIgnores.append(filter[1:])
+                        else:
+                            gofilterIgnores.append(filter)
 
                     dirs_copy = list(dirs)
                     for dir in dirs_copy:
-                        if any(os.path.normcase(dir) == x for x in goignoreIgnores):
+                        if any(fnmatch.fnmatch(dir, x) for x in gofilterIgnores):
                             dirs.remove(dir)
                     files_copy = list(files)
                     for file in files_copy:
-                        if any(os.path.normcase(file) == x for x in goignoreIgnores):
+                        if any(fnmatch.fnmatch(file, x) for x in gofilterIgnores):
                             files.remove(file)
-                    files.remove(".goignore")
 
                 if recursive and ignoredDirectories:
                     dirs_copy = list(dirs)
