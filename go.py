@@ -1,4 +1,4 @@
-# VERSION 21.04.09.01
+# VERSION 21.05.12.01
 
 import ctypes
 import difflib
@@ -71,15 +71,16 @@ def PrintHelp():
     print("/crossjoin    : Cross-joins all apply lists, resulting in all possible argument combinations.")
     print("/[type]apply  : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
-    print("                A type must be specified.")
+    print("                A type must always be specified.")
     print("                Accepts a number of modifiers with +[modifier], before any apply-specific arguments.")
+    print("                Apply-specific arguments must always coem last: [apply type](\\+[modifier])*(-[arguments])?")
     print("                Types of apply:")
     print("                    C: reads the input text from the clipboard as lines")
     print("                    F: reads the lines of a file, specified with *-path")
     print("                    G: reads the output lines of a go command, specified with *-command")
     print("                    I: reads the immediate string as a comma separated list, specified with *-text")
-    print("                    P: reads the input lines from stdin until EOF")
-    print("                    R: generates a range of numbers and accepts 1 to 3 parameters (see python's range())")
+    print("                    P: reads the input lines from stdin until EOF; returns the same arguments if used again")
+    print("                    R: generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
     print("                    f:fmt    format the string using a standard printf format")
@@ -87,7 +88,9 @@ def PrintHelp():
     print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
     print("                             if none, the argument list gets flattened to multiple arguments, and must be last")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
-    print("                    r:regex  returns the first match using the specified regex")
+    print("                    rm:rgx   filters out arguments that don't match (anywhere) the specified regex")
+    print("                    rs:rgx   returns the first match using the specified regex, for every argument")
+    print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
@@ -124,7 +127,7 @@ def PrintExamples():
     print("    dir /b | go /papply+[ss:-4:] cmd /c echo")
     print()
     print("Print only the extensions of all files in the current directory, read from stdin; not using [^.]+ due to parsing issues:")
-    print("    dir /b | go /papply+[r:\\..+?$] cmd /c echo")
+    print("    dir /b | go /papply+[rs:\\..+?$] cmd /c echo")
     print()
     print("Concatenate files using cmd's copy and go's format+flatten:")
     print("    dir /b *.bin | go /asscript /papply+[f:\\\"%s\\\"]+[fl:+] copy /b %%%% out.bin")
@@ -250,9 +253,12 @@ class Utils(object):
 
         return ""
 
+    SAVED_STDIN = []
+
     @staticmethod
     def ReadStdin() -> typing.List[str]:
-        lines = []
+        if Utils.SAVED_STDIN:
+            return list(Utils.SAVED_STDIN)
 
         while True:
             try:
@@ -263,9 +269,9 @@ class Utils(object):
             if not line:
                 continue
 
-            lines.append(line)
+            Utils.SAVED_STDIN.append(line)
 
-        return lines
+        return list(Utils.SAVED_STDIN)
 
     @staticmethod
     def ReadAllLines(file: str) -> typing.List[str]:
@@ -648,8 +654,13 @@ class GoConfig:
 
                         func = eval("lambda x : x[" + expression + "]")
                         modifiers.append(("ss", func))
-                    elif m := re.match("r:(.+)", modifierText, re.I):
-                        modifiers.append(("r", m.group(1)))
+                    elif m := re.match("(r[ms]+):(.+)", modifierText, re.I):
+                        if len(m.group(1)) == 2:
+                            modifiers.append((m.group(1), m.group(2)))
+                        elif m.group(1) == "rms":
+                            modifiers.append(("rm", m.group(2)))
+                            modifiers.append(("rs", m.group(2)))
+
                 elif match.group(2):
                     applyArgument = match.group(2)
 
@@ -734,10 +745,13 @@ class GoConfig:
                         applyArgument.List = [applyArgument.List]
                 elif modifierType == "ss":
                     applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
-                elif modifierType == "r":
+                elif modifierType == "rm":
+                    regex = re.compile(modifierArgument, re.I)
+                    applyArgument.List = [x for x in applyArgument.List if regex.search(x)]
+                elif modifierType == "rs":
                     regex = re.compile(modifierArgument, re.I)
                     for i in range(len(applyArgument.List)):
-                        match = regex.match(applyArgument.List[i])
+                        match = regex.search(applyArgument.List[i])
                         if match:
                             applyArgument.List[i] = match.group(0)
                         else:
@@ -1140,11 +1154,11 @@ if __name__ == "__main__":
         PrintHelp()
         exit(0)
 
-    Configuration = GoConfig()
+    config = GoConfig()
 
     i = 1
     while i < len(sys.argv):
-        if not Configuration.TryParseArgument(sys.argv[i]):
+        if not config.TryParseArgument(sys.argv[i]):
             break
         i += 1
 
@@ -1152,15 +1166,15 @@ if __name__ == "__main__":
         PrintHelp()
         exit()
 
-    if not Configuration.Validate():
+    if not config.Validate():
         exit(-1)
 
-    if Configuration.WaitFor:
-        Utils.WaitForProcesses(Configuration.WaitFor, Configuration.QuietGo)
+    if config.WaitFor:
+        Utils.WaitForProcesses(config.WaitFor, config.QuietGo)
 
     target = sys.argv[i]
     targetArguments = sys.argv[i + 1:]
-    targetArguments = Configuration.ProcessApplyArguments(targetArguments)
+    targetArguments = config.ProcessApplyArguments(targetArguments)
 
-    result = Run(Configuration, target, targetArguments)
+    result = Run(config, target, targetArguments)
     exit(result or 0)
