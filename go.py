@@ -1,4 +1,4 @@
-# VERSION 21.05.12.01
+# VERSION 21.05.15.01
 
 import ctypes
 import difflib
@@ -16,6 +16,7 @@ import typing
 import shlex
 import sys
 import unicodedata
+import urllib.request
 
 
 def PrintHelp():
@@ -73,11 +74,12 @@ def PrintHelp():
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
     print("                A type must always be specified.")
     print("                Accepts a number of modifiers with +[modifier], before any apply-specific arguments.")
-    print("                Apply-specific arguments must always coem last: [apply type](\\+[modifier])*(-[arguments])?")
+    print("                Apply-specific arguments must always come last: [apply type](\\+[modifier])*(-[arguments])?")
     print("                Types of apply:")
     print("                    C: reads the input text from the clipboard as lines")
     print("                    F: reads the lines of a file, specified with *-path")
     print("                    G: reads the output lines of a go command, specified with *-command")
+    print("                    H: fetches lines from the specified URL")
     print("                    I: reads the immediate string as a comma separated list, specified with *-text")
     print("                    P: reads the input lines from stdin until EOF; returns the same arguments if used again")
     print("                    R: generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
@@ -431,9 +433,19 @@ class Utils(object):
                         print(str(pids[i]) + " exited")
             time.sleep(0.1)
 
+    @staticmethod
+    def GetTextFromUrl(url: str) -> typing.List[str]:
+        data = urllib.request.urlopen(url)
+        lines = []
+
+        for line in data:
+            lines.append(line.decode("utf-8"))
+
+        return lines
+
 
 class GoConfig:
-    _ApplyRegex = re.compile("^/([cfgipr])apply(.*)$", re.I)
+    _ApplyRegex = re.compile("^/([cfghipr])apply(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -708,14 +720,16 @@ class GoConfig:
         for applyArgument in self.ApplyLists:
             if applyArgument.SourceType == "c":
                 applyArgument.List = [x for x in Utils.GetClipboardText().split("\r\n") if len(x) > 0]
-            elif applyArgument.SourceType == "p":
-                applyArgument.List = Utils.ReadStdin()
             elif applyArgument.SourceType == "f":
                 applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
             elif applyArgument.SourceType == "g":
                 applyArgument.List = Utils.CaptureOutput(applyArgument.Source)
+            elif applyArgument.SourceType == "h":
+                applyArgument.List = Utils.GetTextFromUrl(applyArgument.Source)
             elif applyArgument.SourceType == "i":
                 applyArgument.List = applyArgument.Source.split(",")
+            elif applyArgument.SourceType == "p":
+                applyArgument.List = Utils.ReadStdin()
             elif applyArgument.SourceType == "r":
                 rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
