@@ -1,4 +1,4 @@
-# VERSION 21.05.15.01
+# VERSION 21.05.27.01
 
 import ctypes
 import difflib
@@ -820,9 +820,11 @@ class GoConfig:
             newArgument = self._ProcessInlineMarker(targetArgument)
             newArguments.append(newArgument)
 
-        for applyArgument in self.ApplyLists:
+        for i in range(len(self.ApplyLists)):
+            applyArgument = self.ApplyLists[i]
             for indexer in (x for x in applyArgument.Modifiers if x[0] == "i"):
                 newArguments.insert(indexer[1], applyArgument.List)
+            self._ApplyListsUsed[i] = True
 
         applyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
 
