@@ -1,4 +1,4 @@
-# VERSION 21.05.27.01
+# VERSION 21.06.23.01
 
 import ctypes
 import difflib
@@ -824,7 +824,7 @@ class GoConfig:
             applyArgument = self.ApplyLists[i]
             for indexer in (x for x in applyArgument.Modifiers if x[0] == "i"):
                 newArguments.insert(indexer[1], applyArgument.List)
-            self._ApplyListsUsed[i] = True
+                self._ApplyListsUsed[i] = True
 
         applyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
 
