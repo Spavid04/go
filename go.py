@@ -1,4 +1,4 @@
-# VERSION 21.06.23.01
+# VERSION 21.06.23.02
 
 import ctypes
 import difflib
@@ -632,7 +632,7 @@ class GoConfig:
             self.Unsafe = True
 
         elif GoConfig._ApplyRegex.match(lower):
-            groups = GoConfig._ApplyRegex.match(lower).groups()
+            groups = GoConfig._ApplyRegex.match(argument).groups()
             type = groups[0]
             argsstr = groups[1]
             argregex = re.compile("\\+\\[(.+?)\\](?=$|-|\\+)|-(.+)$", re.I)
