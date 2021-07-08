@@ -1,4 +1,4 @@
-# VERSION 21.06.23.02
+# VERSION 21.07.08.01
 
 import ctypes
 import difflib
@@ -24,7 +24,8 @@ def PrintHelp():
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
     print("Run with /examples to print some usage examples.")
     print()
-    print("By default, it only searches (non-recursively) in the %PATH% variable.")
+    print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
+    print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
     print("Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
     print("Config files are json files.")
     print("Added directories are searched recursively.")
@@ -1005,7 +1006,9 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     if os.path.abspath(target).lower() == target.lower():
         return ([target], [])
 
-    allFiles = Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False)
+    allFiles = []
+    allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False))
+    allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False))
     for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True, config.IgnoredDirectories):
         if file not in allFiles:
             allFiles.append(file)
