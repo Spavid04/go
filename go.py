@@ -1,4 +1,4 @@
-# VERSION 21.07.12.01
+# VERSION 21.08.27.01
 
 import ctypes
 import difflib
@@ -6,6 +6,7 @@ import fnmatch
 import itertools
 import json
 import os
+import pickle
 # import psutil # lazily imported
 import re
 import subprocess
@@ -32,6 +33,8 @@ def PrintHelp():
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
     print("Set key \"AlwaysYes\" in the config file to always set /yes.")
     print("Set key \"AlwaysQuiet\" in the config file to always set /quiet.")
+    print("Set key \"AlwaysFirst\" in the config file to automatically pick the first of multiple matches.")
+    print("Set key \"AlwaysCache\" in the config file to always use the path cache by default.")
     print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
     print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
     print("  whether to include or ignore matches.")
@@ -39,13 +42,21 @@ def PrintHelp():
     print("Avaliable go arguments:")
     print()
     print("/config-XXXX  : Uses the specified config file.")
+    print()
     print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
     print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list (recursive).")
     print("/ign[+-]XXXX  : Adds or removes the directory to the ignored directories list (recursive).")
+    print("Any of the previous commands will temporarily disable the path cache.")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
     print("/in[+-]XXXX   : Add a path substring filter to choose ambiguous matches (in+ or (not) in-).")
     print("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
+    print()
+    print("/cache[+-]    : Instruct go whether to use the path cache. By default, it is not used.")
+    print("                Will be created if not already existing, or if more than one week old.")
+    print("                Speeds up target lookup if you have a wide path.")
+    print("                Also see config option \"AlwaysCache\".")
+    print("/refresh      : Manually refresh the path cache.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
@@ -137,6 +148,17 @@ def PrintExamples():
 
 
 class Utils(object):
+    @staticmethod
+    def GetScriptDir() -> str:
+        scriptPath = __file__
+        try:
+            scriptPath = os.readlink(scriptPath)
+        except:
+            pass
+
+        scriptDir = os.path.split(scriptPath)[0]
+        return scriptDir
+
     @staticmethod
     def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str], recursive: bool,
                                  ignoredDirectories: typing.Optional[typing.List[str]] = None) -> \
@@ -455,9 +477,13 @@ class GoConfig:
         self.TargetedDirectories = []
         self.IgnoredDirectories = []
 
+        self.UsePathCache = False
+        self.RefreshPathCache = False
+
         self.RegexTargetMatch = False
         self.DirectoryFilter = []  # type: typing.List[typing.Tuple[bool, str]]
         self.NthMatch = None
+        self.FirstMatchFromConfig = False
 
         self.QuietGo = False
         self.EchoTarget = False
@@ -488,14 +514,7 @@ class GoConfig:
         path = self.ConfigFile
 
         if os.path.abspath(path).lower() != path.lower():
-            scriptPath = __file__
-            try:
-                scriptPath = os.readlink(scriptPath)
-            except:
-                pass
-
-            scriptDir = os.path.split(scriptPath)[0]
-
+            scriptDir = Utils.GetScriptDir()
             path = os.path.join(scriptDir, path)
 
         targetedExtensions = []
@@ -509,7 +528,7 @@ class GoConfig:
                 targetedDirectories = config["TargetedDirectories"]
                 ignoredDirectories = config["IgnoredDirectories"]
         except:
-            print(">>>config file invalid or missinn")
+            print(">>>config file invalid or missing")
             return
 
         if overwriteSettings:
@@ -525,6 +544,10 @@ class GoConfig:
             self.TryParseArgument("/yes")
         if "AlwaysQuiet" in config and config["AlwaysQuiet"]:
             self.TryParseArgument("/yes")
+        if "AlwaysFirst" in config and config["AlwaysFirst"]:
+            self.FirstMatchFromConfig = True
+        if "AlwaysCache" in config and config["AlwaysCache"]:
+            self.UsePathCache = True
 
     class ApplyElement:
         def __init__(self,
@@ -558,6 +581,7 @@ class GoConfig:
             else:
                 if path not in self.TargetedDirectories:
                     self.TargetedDirectories.append(path)
+            self.UsePathCache = False
         elif lower.startswith("/ign"):
             action = lower[4]
             path = os.path.abspath(lower[5:])
@@ -568,6 +592,7 @@ class GoConfig:
             else:
                 if path not in self.IgnoredDirectories:
                     self.IgnoredDirectories.append(path)
+            self.UsePathCache = False
         elif lower.startswith("/ext"):
             action = lower[4]
             extension = lower[5:]
@@ -578,6 +603,16 @@ class GoConfig:
             else:
                 if extension not in self.TargetedExtensions:
                     self.TargetedExtensions.append(extension)
+            self.UsePathCache = False
+
+        elif lower.startswith("/cache"):
+            value = lower[6]
+            if value == "+":
+                self.UsePathCache = True
+            elif value == "-":
+                self.UsePathCache = False
+        elif lower == "/refresh":
+            self.RefreshPathCache = True
 
         elif lower == "/regex":
             self.RegexTargetMatch = True
@@ -1007,12 +1042,36 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
         return ([target], [])
 
     allFiles = []
-    allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False))
-    allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False))
-    for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True, config.IgnoredDirectories):
-        if file not in allFiles:
-            allFiles.append(file)
-    allFiles = unique(allFiles)
+
+    scriptDir = Utils.GetScriptDir()
+    cachePath = os.path.join(scriptDir, "go.cache")
+    overwriteCache = config.RefreshPathCache
+
+    if config.UsePathCache:
+        if os.path.isfile(cachePath):
+            with open(cachePath, "rb") as f:
+                (lastRefresh, cachedPaths) = pickle.load(f)
+
+            if lastRefresh < (time.time() - (60*60*24*7)):
+                overwriteCache = True
+            else:
+                if not config.RefreshPathCache:
+                    allFiles.extend(cachedPaths)
+        else:
+            overwriteCache = True
+
+    if len(allFiles) == 0:
+        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False))
+        allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False))
+        for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True,
+                                                   config.IgnoredDirectories):
+            if file not in allFiles:
+                allFiles.append(file)
+        allFiles = unique(allFiles)
+
+    if overwriteCache:
+        with open(cachePath, "wb") as f:
+            pickle.dump((time.time(), allFiles), f)
 
     similarities = []
     for file in allFiles:
@@ -1057,7 +1116,11 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
 
         exit(-1)
 
-    if len(exactMatches) > 1 and config.NthMatch is None:
+    nthMatch = config.NthMatch
+    if nthMatch is None and config.FirstMatchFromConfig:
+        nthMatch = 0
+
+    if len(exactMatches) > 1 and nthMatch is None:
         print(">>>multiple matches found!")
 
         for i in range(len(exactMatches)):
@@ -1065,13 +1128,16 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
             print(">>> [{0:2d}]\t{1:20s}\tin {2}".format(i, filename, directory))
 
         exit(-1)
+    if len(exactMatches) > 1 and config.FirstMatchFromConfig and config.NthMatch is None:
+        if not config.QuietGo:
+            print(">>>autoselected the first of many matches because of config \"AlwaysFirst\"!")
 
-    if len(exactMatches) > 1 and config.NthMatch is not None:
-        if config.NthMatch >= len(exactMatches):
+    if len(exactMatches) > 1 and nthMatch is not None:
+        if nthMatch >= len(exactMatches):
             print(">>>nth match index out of range!")
             exit(-1)
 
-        return exactMatches[config.NthMatch]
+        return exactMatches[nthMatch]
 
     return exactMatches[0]
 
