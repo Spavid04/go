@@ -1,4 +1,4 @@
-# VERSION 21.07.08.01
+# VERSION 21.07.12.01
 
 import ctypes
 import difflib
@@ -509,7 +509,7 @@ class GoConfig:
                 targetedDirectories = config["TargetedDirectories"]
                 ignoredDirectories = config["IgnoredDirectories"]
         except:
-            print(">>>config file invalid")
+            print(">>>config file invalid or missinn")
             return
 
         if overwriteSettings:
