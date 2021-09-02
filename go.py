@@ -1,4 +1,4 @@
-# VERSION 21.08.27.01
+# VERSION 21.09.02.01
 
 import ctypes
 import difflib
@@ -46,6 +46,8 @@ def PrintHelp():
     print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
     print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list (recursive).")
     print("/ign[+-]XXXX  : Adds or removes the directory to the ignored directories list (recursive).")
+    print("/executables  : Toggle inclusion of files that are marked as executables, regardless of extension.")
+    print("                By default, Windows excludes them, and UNIX includes them.")
     print("Any of the previous commands will temporarily disable the path cache.")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
@@ -161,6 +163,7 @@ class Utils(object):
 
     @staticmethod
     def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str], recursive: bool,
+                                 includeModX: bool,
                                  ignoredDirectories: typing.Optional[typing.List[str]] = None) -> \
             typing.List[str]:
         matchingFiles = []
@@ -202,18 +205,21 @@ class Utils(object):
                             dirs.remove(dir)
 
                 for file in files:
-                    (_, extension) = os.path.splitext(file)
-                    extension = extension.lower()
+                    fullpath = os.path.join(root, file)
+                    canAdd = False
+                    if includeModX:
+                        if os.path.isfile(fullpath) and os.access(fullpath, os.X_OK):
+                            canAdd = True
+                    if not canAdd:
+                        (_, extension) = os.path.splitext(file)
+                        extension = extension.lower()
+                        canAdd = extension in extensions
 
-                    if extension not in extensions:
-                        continue
-
-                    abspath = os.path.abspath(os.path.join(root, file))
-
-                    if abspath in matchingFiles:
-                        continue
-
-                    matchingFiles.append(abspath)
+                    if canAdd:
+                        abspath = os.path.abspath(fullpath)
+                        if abspath in matchingFiles:
+                            continue
+                        matchingFiles.append(abspath)
 
                 if not recursive:
                     break
@@ -476,6 +482,7 @@ class GoConfig:
         self.TargetedExtensions = [".exe", ".cmd", ".bat", ".py"]
         self.TargetedDirectories = []
         self.IgnoredDirectories = []
+        self.Executables = False if sys.platform == "win32" else True
 
         self.UsePathCache = False
         self.RefreshPathCache = False
@@ -603,6 +610,9 @@ class GoConfig:
             else:
                 if extension not in self.TargetedExtensions:
                     self.TargetedExtensions.append(extension)
+            self.UsePathCache = False
+        elif lower == "/executables":
+            self.Executables = not self.Executables
             self.UsePathCache = False
 
         elif lower.startswith("/cache"):
@@ -1047,7 +1057,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     cachePath = os.path.join(scriptDir, "go.cache")
     overwriteCache = config.RefreshPathCache
 
-    if config.UsePathCache:
+    if config.UsePathCache and not config.RefreshPathCache:
         if os.path.isfile(cachePath):
             with open(cachePath, "rb") as f:
                 (lastRefresh, cachedPaths) = pickle.load(f)
@@ -1061,10 +1071,10 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             overwriteCache = True
 
     if len(allFiles) == 0:
-        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False))
-        allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False))
+        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False, config.Executables))
+        allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False, config.Executables))
         for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True,
-                                                   config.IgnoredDirectories):
+                                                   config.Executables, config.IgnoredDirectories):
             if file not in allFiles:
                 allFiles.append(file)
         allFiles = unique(allFiles)
