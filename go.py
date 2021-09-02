@@ -1,4 +1,4 @@
-# VERSION 21.09.02.01
+# VERSION 21.09.02.02
 
 import ctypes
 import difflib
@@ -616,11 +616,14 @@ class GoConfig:
             self.UsePathCache = False
 
         elif lower.startswith("/cache"):
-            value = lower[6]
-            if value == "+":
+            if len(lower) >= 7:
+                value = lower[6]
+                if value == "+":
+                    self.UsePathCache = True
+                elif value == "-":
+                    self.UsePathCache = False
+            else:
                 self.UsePathCache = True
-            elif value == "-":
-                self.UsePathCache = False
         elif lower == "/refresh":
             self.RefreshPathCache = True
 
