@@ -1,4 +1,4 @@
-# VERSION 21.09.02.02
+# VERSION 21.09.11.01
 
 import ctypes
 import difflib
@@ -396,7 +396,7 @@ class Utils(object):
 
     @staticmethod
     def CreateScriptFile(list: typing.List[typing.List[str]], echoOff: bool) -> str:
-        if os.name == "nt":
+        if sys.platform == "win32":
             echo = "@echo off"
             suffix = ".bat"
             selfDelete = "(goto) 2>nul & del \"%~f0\""
@@ -417,11 +417,14 @@ class Utils(object):
             f.write(selfDelete)
             f.write("\n")
 
-            return f.name
+            script = f.name
+
+        os.chmod(script, 0o755)
+        return script
 
     @staticmethod
     def EscapeForShell(text: str) -> str:
-        if os.name == "nt":
+        if sys.platform == "win32":
             if not text or re.search(r"([\"\s])", text):
                 text = "\"" + text.replace("\"", r"\"") + "\""
 
@@ -501,7 +504,7 @@ class GoConfig:
         self.WorkingDirectory = None
         self.WaitForExit = True
         self.Detach = False
-        self.WaitFor = []
+        self.WaitFor = []  # type: typing.List[int]
         self.Parallel = False
         self.Batched = False
         self.ParallelLimit = None
@@ -1175,7 +1178,10 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
             exit(-1)
 
     if config.AsShellScript:
-        target = GetDesiredMatchOrExit(config, "cmd.exe")
+        if sys.platform == "win32":
+            target = GetDesiredMatchOrExit(config, "cmd.exe")
+        else:
+            target = GetDesiredMatchOrExit(config, "bash")
     else:
         target = GetDesiredMatchOrExit(config, goTarget)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
