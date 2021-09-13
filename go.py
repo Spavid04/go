@@ -1,4 +1,4 @@
-# VERSION 21.09.11.01
+# VERSION 21.09.13.01
 
 import ctypes
 import difflib
@@ -180,9 +180,14 @@ class Utils(object):
                         gofilterFilters = f.read().splitlines()
 
                     gofilterIgnores = []
+                    gofilterIncludes = []
                     for filter in gofilterFilters:
                         if filter[0] == "+":
-                            directoriesQueue.append(os.path.join(root, os.path.normcase(filter[1:])))
+                            fullpath = os.path.join(root, os.path.normcase(filter[1:]))
+                            if os.path.isdir(fullpath):
+                                directoriesQueue.append(fullpath)
+                            else:
+                                gofilterIncludes.append(filter[1:])
                         elif filter[0] == "-":
                             gofilterIgnores.append(filter[1:])
                         else:
@@ -190,11 +195,13 @@ class Utils(object):
 
                     dirs_copy = list(dirs)
                     for dir in dirs_copy:
-                        if any(fnmatch.fnmatch(dir, x) for x in gofilterIgnores):
+                        if any(fnmatch.fnmatch(dir, x) for x in gofilterIgnores) \
+                                and not any(fnmatch.fnmatch(dir, x) for x in gofilterIncludes):
                             dirs.remove(dir)
                     files_copy = list(files)
                     for file in files_copy:
-                        if any(fnmatch.fnmatch(file, x) for x in gofilterIgnores):
+                        if any(fnmatch.fnmatch(file, x) for x in gofilterIgnores) \
+                                and not any(fnmatch.fnmatch(file, x) for x in gofilterIncludes):
                             files.remove(file)
 
                 if recursive and ignoredDirectories:
