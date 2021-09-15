@@ -1,4 +1,4 @@
-# VERSION 93    REV 21.09.15.03
+# VERSION 94    REV 21.09.15.04
 
 import ctypes
 import difflib
@@ -1122,7 +1122,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             overwriteCache = True
 
     if len(allFiles) == 0:
-        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(";"), config.TargetedExtensions, False, config.Executables))
+        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions, False, config.Executables))
         allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False, config.Executables))
         for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True,
                                                    config.Executables, config.IgnoredDirectories):
