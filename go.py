@@ -1,4 +1,4 @@
-# VERSION 21.09.13.01
+# VERSION 21.09.15.01
 
 import ctypes
 import difflib
@@ -20,7 +20,23 @@ import unicodedata
 import urllib.request
 
 
+QUIET_LEVEL = 0
+def can_print(level: int) -> bool:
+    return level >= QUIET_LEVEL
+
+def Cprint(*args, level: int = 0, **kwargs):
+    if not can_print(level):
+        return
+
+    print(*args, **kwargs)
+def Cprint_gen(level: int) -> typing.Callable:
+    return lambda *args, **kwargs: Cprint(*args, level=level, **kwargs)
+
+
 def PrintHelp():
+    if not can_print(2):
+        return
+    
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
     print("Run with /examples to print some usage examples.")
@@ -61,6 +77,7 @@ def PrintHelp():
     print("/refresh      : Manually refresh the path cache.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
+    print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is 3 q's.")
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
     print("/echo         : Echoes the command to be run, including arguments, before running it.")
     print("/dry          : Does not actually run the target executable.")
@@ -115,6 +132,9 @@ def PrintHelp():
 
 
 def PrintExamples():
+    if not can_print(2):
+        return
+    
     print("Run a program:")
     print("    go calc")
     print()
@@ -448,17 +468,16 @@ class Utils(object):
             return shlex.quote(text)
 
     @staticmethod
-    def WaitForProcesses(pids: typing.List[int], quiet: bool):
+    def WaitForProcesses(pids: typing.List[int]):
         if "psutil" not in sys.modules:
             try:
                 import psutil
             except ModuleNotFoundError:
-                print(">>>psutil module not found; /waitfor will not work!")
+                Cprint(">>>psutil module not found; /waitfor will not work!", level=2)
                 return
 
         exited = [False]*len(pids)
-        if not quiet:
-            print("Waiting for: " + ", ".join(str(x) for x in pids))
+        Cprint("Waiting for: " + ", ".join(str(x) for x in pids))
 
         while not all(exited):
             for i in range(len(pids)):
@@ -468,8 +487,7 @@ class Utils(object):
                 exists = psutil.pid_exists(pids[i])
                 if not exists:
                     exited[i] = True
-                    if not quiet:
-                        print(str(pids[i]) + " exited")
+                    Cprint(str(pids[i]) + " exited")
             time.sleep(0.1)
 
     @staticmethod
@@ -484,6 +502,7 @@ class Utils(object):
 
 
 class GoConfig:
+    _QuietRegex = re.compile("^/(q+)uiet$", re.I)
     _ApplyRegex = re.compile("^/([cfghipr])apply(.*)$", re.I)
 
     def __init__(self):
@@ -502,7 +521,7 @@ class GoConfig:
         self.NthMatch = None
         self.FirstMatchFromConfig = False
 
-        self.QuietGo = False
+        self.QuietGo = 0
         self.EchoTarget = False
         self.DryRun = False
         self.SuppressPrompts = False
@@ -545,7 +564,7 @@ class GoConfig:
                 targetedDirectories = config["TargetedDirectories"]
                 ignoredDirectories = config["IgnoredDirectories"]
         except:
-            print(">>>config file invalid or missing")
+            Cprint(">>>config file invalid or missing", level=2)
             return
 
         if overwriteSettings:
@@ -651,8 +670,13 @@ class GoConfig:
             if len(nthAsString) > 0:
                 self.NthMatch = int(nthAsString)
 
-        elif lower == "/quiet":
-            self.QuietGo = True
+        elif GoConfig._QuietRegex.match(argument):
+            m = GoConfig._QuietRegex.match(argument)
+            count = len(m.group(1))
+
+            global QUIET_LEVEL
+            QUIET_LEVEL += count
+            self.QuietGo += count
             self.TryParseArgument("/yes")
         elif lower == "/list":
             self.TryParseArgument("/echo")
@@ -752,19 +776,17 @@ class GoConfig:
 
     def Validate(self) -> bool:
         if self.Parallel and not self.WaitForExit:
-            if not self.QuietGo:
-                print(">>>/fork doesn't do anything with /parallel")
+            Cprint(">>>/fork doesn't do anything with /parallel", level=1)
 
         if self.Batched and not self.ParallelLimit:
-            print(">>>/batch requires /limit to be specified")
+            Cprint(">>>/batch requires /limit to be specified", level=2)
             return False
 
         if self.AsShellScript and self.Parallel:
-            if not self.QuietGo:
-                print(">>>/asscript cannot be used with /parallel")
+            Cprint(">>>/asscript cannot be used with /parallel", level=1)
 
         if self.CrossJoin and (self.RepeatCount or self.Rollover):
-            print(">>>/crossjoin cannot be used either /rollover or /repeat")
+            Cprint(">>>/crossjoin cannot be used either /rollover or /repeat", level=2)
             return False
 
         return True
@@ -1020,7 +1042,7 @@ class ParallelRunner:
         doneSemaphore.release()
 
     def _Printer(self):
-        if self._Configuration.QuietGo:
+        if not can_print(1):
             return
 
         time.sleep(0.01)
@@ -1033,7 +1055,10 @@ class ParallelRunner:
                 if self._PrintArray[i] is not None:
                     tempArray.append((i, self._PrintArray[i]))
 
-            os.system("cls")
+            if sys.platform == "win32":
+                os.system("cls")
+            else:
+                os.system("clear")
             for (i, output) in tempArray:
                 print("[{0:3d}]  {1}".format(i + 1, Utils.RemoveControlCharacters(output)))
 
@@ -1128,14 +1153,14 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
     (exactMatches, fuzzyMatches) = FindMatchesAndAlternatives(config, target)
 
     if len(exactMatches) == 0:
-        print(">>>no matches found for \"{0}\"!".format(target))
+        Cprint(">>>no matches found for \"{0}\"!".format(target), level=2)
 
         if len(fuzzyMatches) > 0:
-            print(">>>did you mean:")
+            Cprint(">>>did you mean:", level=2)
 
             for fuzzyMatch in fuzzyMatches:
                 (directory, filename) = os.path.split(fuzzyMatch)
-                print(">>>    {0:24s} in {1}".format(filename, directory))
+                Cprint(">>>    {0:24s} in {1}".format(filename, directory), level=2)
 
         exit(-1)
 
@@ -1144,20 +1169,19 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
         nthMatch = 0
 
     if len(exactMatches) > 1 and nthMatch is None:
-        print(">>>multiple matches found!")
+        Cprint(">>>multiple matches found!", level=2)
 
         for i in range(len(exactMatches)):
             (directory, filename) = os.path.split(exactMatches[i])
-            print(">>> [{0:2d}]\t{1:20s}\tin {2}".format(i, filename, directory))
+            Cprint(">>> [{0:2d}]\t{1:20s}\tin {2}".format(i, filename, directory), level=2)
 
         exit(-1)
     if len(exactMatches) > 1 and config.FirstMatchFromConfig and config.NthMatch is None:
-        if not config.QuietGo:
-            print(">>>autoselected the first of many matches because of config \"AlwaysFirst\"!")
+        Cprint(">>>autoselected the first of many matches because of config \"AlwaysFirst\"!")
 
     if len(exactMatches) > 1 and nthMatch is not None:
         if nthMatch >= len(exactMatches):
-            print(">>>nth match index out of range!")
+            Cprint(">>>nth match index out of range!", level=2)
             exit(-1)
 
         return exactMatches[nthMatch]
@@ -1173,12 +1197,12 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         runs = len(targetArguments[0])
 
     if runs > 50 and not config.SuppressPrompts:
-        print(">>>{0} lines present at source. continue? (Y/n)".format(runs))
+        Cprint(">>>{0} lines present at source. continue? (Y/n)".format(runs), level=2)
         answer = ""
         try:
             answer = input()
         except EOFError:
-            print(">>>could not read stdin; use /yes to run")
+            Cprint(">>>could not read stdin; use /yes to run", level=2)
             exit(-1)
 
         if len(answer) > 0 and answer[0] != "y":
@@ -1204,7 +1228,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
     if config.Detach:
         flags |= subprocess.DETACHED_PROCESS
 
-    if not config.QuietGo:
+    if can_print(0):
         print(">>>target: {0}".format(target))
         sys.stdout.flush()
 
@@ -1219,7 +1243,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
-        if config.EchoTarget and not config.QuietGo:
+        if config.EchoTarget and can_print(1):
             if config.Unsafe:
                 print((target if not config.AsShellScript else goTarget) + " " + " ".join(arguments))
             else:
@@ -1281,7 +1305,7 @@ if __name__ == "__main__":
         exit(-1)
 
     if config.WaitFor:
-        Utils.WaitForProcesses(config.WaitFor, config.QuietGo)
+        Utils.WaitForProcesses(config.WaitFor)
 
     target = sys.argv[i]
     targetArguments = sys.argv[i + 1:]
