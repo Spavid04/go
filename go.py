@@ -1,4 +1,4 @@
-# VERSION 21.09.15.01
+# VERSION 21.09.15.02
 
 import ctypes
 import difflib
@@ -67,6 +67,7 @@ def PrintHelp():
     print("Any of the previous commands will temporarily disable the path cache.")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
+    print("/wild         : Matches the files by UNIX-like wildcards instead of filenames.")
     print("/in[+-]XXXX   : Add a path substring filter to choose ambiguous matches (in+ or (not) in-).")
     print("/nth-XX       : Runs the nth file found. (specified by the 0-indexed XX suffix)")
     print()
@@ -256,24 +257,29 @@ class Utils(object):
     _Compare_RegexObject = None
 
     @staticmethod
-    def ComparePathAndFile(path: str, fileOrRegex: str, asRegex: bool) -> float:
+    def ComparePathAndFile(path: str, pattern: str, asRegex: bool, asWildcard: bool) -> float:
         (_, fullFilename) = os.path.split(path)
         fullFilename = fullFilename.lower()
         (filename, _) = os.path.splitext(fullFilename)
 
         if asRegex:
             if Utils._Compare_RegexObject is None:
-                Utils._Compare_RegexObject = re.compile(fileOrRegex, re.I)
+                Utils._Compare_RegexObject = re.compile(pattern, re.I)
 
             if Utils._Compare_RegexObject.match(filename) or Utils._Compare_RegexObject.match(fullFilename):
                 return 1
             else:
                 return 0
+        elif asWildcard:
+            if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(fullFilename, pattern):
+                return 1
+            else:
+                return 0
         else:
-            fileOrRegex = fileOrRegex.lower()
+            pattern = pattern.lower()
 
-            return max(difflib.SequenceMatcher(None, filename, fileOrRegex).ratio(),
-                       difflib.SequenceMatcher(None, fullFilename, fileOrRegex).ratio())
+            return max(difflib.SequenceMatcher(None, filename, pattern).ratio(),
+                       difflib.SequenceMatcher(None, fullFilename, pattern).ratio())
 
     @staticmethod
     def PathContains(path: str, substring: str) -> bool:
@@ -517,6 +523,7 @@ class GoConfig:
         self.RefreshPathCache = False
 
         self.RegexTargetMatch = False
+        self.WildcardTargetMatch = False
         self.DirectoryFilter = []  # type: typing.List[typing.Tuple[bool, str]]
         self.NthMatch = None
         self.FirstMatchFromConfig = False
@@ -658,6 +665,8 @@ class GoConfig:
 
         elif lower == "/regex":
             self.RegexTargetMatch = True
+        elif lower == "/wild":
+            self.WildcardTargetMatch = True
         elif lower.startswith("/in"):
             mode = True if lower[3] == "+" else False
             substring = argument[4:]
@@ -787,6 +796,10 @@ class GoConfig:
 
         if self.CrossJoin and (self.RepeatCount or self.Rollover):
             Cprint(">>>/crossjoin cannot be used either /rollover or /repeat", level=2)
+            return False
+
+        if self.RegexTargetMatch and self.WildcardTargetMatch:
+            Cprint(">>>/regex and /wild cannot be used together", level=2)
             return False
 
         return True
@@ -1137,7 +1150,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
         if not passedThrough:
             continue
 
-        similarities.append((file, Utils.ComparePathAndFile(file, target, config.RegexTargetMatch)))
+        similarities.append((file, Utils.ComparePathAndFile(file, target, config.RegexTargetMatch,
+                                                            config.WildcardTargetMatch)))
 
     exactMatches = [x[0] for x in similarities if x[1] == 1.0]
 
