@@ -1,4 +1,4 @@
-# VERSION 94    REV 21.09.15.04
+# VERSION 95    REV 21.09.22.01
 
 import ctypes
 import difflib
@@ -129,6 +129,7 @@ def PrintHelp():
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
+    print("                    Replacement is also done in quoted or complex arguments.")
     print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
 
 
@@ -952,30 +953,33 @@ class GoConfig:
 
         return newArguments
 
-    _InlineMarkerRegex = re.compile(r"^%%(-?\d*)%%$", re.I)
+    _InlineMarkerRegex = re.compile(r"%%(-?\d*)%%", re.I)
 
-    # todo search for in-quote markers too
     def _ProcessInlineMarker(self, argument: str) -> typing.Union[str, typing.List[str]]:
-        match = GoConfig._InlineMarkerRegex.match(argument)
-        if not match:
+        matches = list(GoConfig._InlineMarkerRegex.finditer(argument))
+        if not matches:
             return argument
 
-        if match.groups()[0]:
-            applyIndex = int(match.groups()[0])
+        processed = []
+        for match in matches:
+            if match.group(1):
+                applyIndex = int(match.group(1))
+                if applyIndex < -len(self.ApplyLists) or applyIndex >= len(self.ApplyLists):
+                    return argument
+            else:
+                applyIndex = self._CurrentApplyListIndex
 
-            if applyIndex < -len(self.ApplyLists) or applyIndex >= len(self.ApplyLists):
-                return argument
-
+            sourceList = list(self.ApplyLists[applyIndex].List)
             self._ApplyListsUsed[applyIndex] = True
             self._CurrentApplyListIndex = (applyIndex + 1) % len(self.ApplyLists)
 
-            return self.ApplyLists[applyIndex].List
-        else:
-            applyIndex = self._CurrentApplyListIndex
-            self._ApplyListsUsed[applyIndex] = True
-            self._CurrentApplyListIndex = (self._CurrentApplyListIndex + 1) % len(self.ApplyLists)
+            if not processed:
+                processed = [argument] * len(sourceList)
 
-            return self.ApplyLists[applyIndex].List
+            markerString = match.group(0)
+            for i in range(len(processed)):
+                processed[i] = processed[i].replace(markerString, sourceList[i])
+        return processed
 
 
 class ParallelRunner:
