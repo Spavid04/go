@@ -1,4 +1,4 @@
-# VERSION 95    REV 21.09.22.01
+# VERSION 96    REV 21.09.23.01
 
 import ctypes
 import difflib
@@ -47,10 +47,12 @@ def PrintHelp():
     print("Config files are json files.")
     print("Added directories are searched recursively.")
     print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
-    print("Set key \"AlwaysYes\" in the config file to always set /yes.")
-    print("Set key \"AlwaysQuiet\" in the config file to always set /quiet.")
-    print("Set key \"AlwaysFirst\" in the config file to automatically pick the first of multiple matches.")
-    print("Set key \"AlwaysCache\" in the config file to always use the path cache by default.")
+    print("Optional config keys:")
+    print("  AlwaysYes [bool]: always set /yes.")
+    print("  AlwaysQuiet [bool]: always set /quiet")
+    print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
+    print("  AlwaysCache [bool]: always use the path cache by default")
+    print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
     print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
     print("  whether to include or ignore matches.")
@@ -76,6 +78,7 @@ def PrintHelp():
     print("                Speeds up target lookup if you have a wide path.")
     print("                Also see config option \"AlwaysCache\".")
     print("/refresh      : Manually refresh the path cache.")
+    print("/nofuzzy      : Disable fuzzy matching, speeding up target search.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
     print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is 3 q's.")
@@ -183,6 +186,7 @@ class Utils(object):
         scriptDir = os.path.split(scriptPath)[0]
         return scriptDir
 
+    #todo return pre-os.split values too (speed up ComparePathAndFile)
     @staticmethod
     def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str], recursive: bool,
                                  includeModX: bool,
@@ -258,12 +262,18 @@ class Utils(object):
     _Compare_RegexObject = None
 
     @staticmethod
-    def ComparePathAndFile(path: str, pattern: str, asRegex: bool, asWildcard: bool) -> float:
+    def ComparePathAndPattern(path: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) -> float:
         (_, fullFilename) = os.path.split(path)
-        fullFilename = fullFilename.lower()
+        if sys.platform == "win32":
+            fullFilename = fullFilename.lower()
         (filename, _) = os.path.splitext(fullFilename)
 
-        if asRegex:
+        if not fuzzy:
+            if sys.platform == "win32":
+                pattern = pattern.lower()
+
+            return int(filename == pattern or fullFilename == pattern)
+        elif asRegex:
             if Utils._Compare_RegexObject is None:
                 Utils._Compare_RegexObject = re.compile(pattern, re.I)
 
@@ -272,12 +282,13 @@ class Utils(object):
             else:
                 return 0
         elif asWildcard:
-            if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(fullFilename, pattern):
-                return 1
-            else:
-                return 0
+            if sys.platform == "win32":
+                pattern = pattern.lower()
+
+            return int(fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(fullFilename, pattern))
         else:
-            pattern = pattern.lower()
+            if sys.platform == "win32":
+                pattern = pattern.lower()
 
             return max(difflib.SequenceMatcher(None, filename, pattern).ratio(),
                        difflib.SequenceMatcher(None, fullFilename, pattern).ratio())
@@ -522,6 +533,7 @@ class GoConfig:
 
         self.UsePathCache = False
         self.RefreshPathCache = False
+        self.FuzzyMatch = True
 
         self.RegexTargetMatch = False
         self.WildcardTargetMatch = False
@@ -592,6 +604,8 @@ class GoConfig:
             self.FirstMatchFromConfig = True
         if "AlwaysCache" in config and config["AlwaysCache"]:
             self.UsePathCache = True
+        if "NoFuzzyMatch" in config and config["NoFuzzyMatch"]:
+            self.FuzzyMatch = False
 
     class ApplyElement:
         def __init__(self,
@@ -663,6 +677,8 @@ class GoConfig:
                 self.UsePathCache = True
         elif lower == "/refresh":
             self.RefreshPathCache = True
+        elif lower == "/nofuzzy":
+            self.FuzzyMatch = False
 
         elif lower == "/regex":
             self.RegexTargetMatch = True
@@ -1154,8 +1170,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
         if not passedThrough:
             continue
 
-        similarities.append((file, Utils.ComparePathAndFile(file, target, config.RegexTargetMatch,
-                                                            config.WildcardTargetMatch)))
+        similarities.append((file, Utils.ComparePathAndPattern(file, target, config.FuzzyMatch, config.RegexTargetMatch,
+                                                               config.WildcardTargetMatch)))
 
     exactMatches = [x[0] for x in similarities if x[1] == 1.0]
 
