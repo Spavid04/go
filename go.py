@@ -1,4 +1,4 @@
-# VERSION 96    REV 21.09.23.01
+# VERSION 97    REV 21.09.23.02
 
 import ctypes
 import difflib
@@ -706,10 +706,10 @@ class GoConfig:
             self.TryParseArgument("/yes")
         elif lower == "/list":
             self.TryParseArgument("/echo")
-            self.TryParseArgument("/dryrun")
+            self.TryParseArgument("/dry")
         elif lower == "/echo":
             self.EchoTarget = True
-        elif lower == "/dryrun":
+        elif lower == "/dry":
             self.DryRun = True
         elif lower == "/yes":
             self.SuppressPrompts = True
