@@ -1,4 +1,4 @@
-# VERSION 97    REV 21.09.23.02
+# VERSION 98    REV 21.09.23.03
 
 import ctypes
 import difflib
@@ -186,13 +186,13 @@ class Utils(object):
         scriptDir = os.path.split(scriptPath)[0]
         return scriptDir
 
-    #todo return pre-os.split values too (speed up ComparePathAndFile)
     @staticmethod
-    def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str], recursive: bool,
-                                 includeModX: bool,
+    def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str],
+                                 recursive: bool, includeModX: bool,
                                  ignoredDirectories: typing.Optional[typing.List[str]] = None) -> \
-            typing.List[str]:
-        matchingFiles = []
+            typing.List[typing.Tuple[str, str]]:
+        matches = []
+        matchingPaths = set()
 
         directoriesQueue = list(directories)
         while directoriesQueue:
@@ -250,34 +250,35 @@ class Utils(object):
 
                     if canAdd:
                         abspath = os.path.abspath(fullpath)
-                        if abspath in matchingFiles:
+                        if abspath in matchingPaths:
                             continue
-                        matchingFiles.append(abspath)
+                        matchingPaths.add(abspath)
+                        matches.append((abspath, file))
 
                 if not recursive:
                     break
 
-        return matchingFiles
+        return matches
 
     _Compare_RegexObject = None
 
     @staticmethod
-    def ComparePathAndPattern(path: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) -> float:
-        (_, fullFilename) = os.path.split(path)
+    def ComparePathAndPattern(file: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) \
+            -> float:
         if sys.platform == "win32":
-            fullFilename = fullFilename.lower()
-        (filename, _) = os.path.splitext(fullFilename)
+            file = file.lower()
+        (filename, _) = os.path.splitext(file)
 
         if not fuzzy:
             if sys.platform == "win32":
                 pattern = pattern.lower()
 
-            return int(filename == pattern or fullFilename == pattern)
+            return int(filename == pattern or file == pattern)
         elif asRegex:
             if Utils._Compare_RegexObject is None:
                 Utils._Compare_RegexObject = re.compile(pattern, re.I)
 
-            if Utils._Compare_RegexObject.match(filename) or Utils._Compare_RegexObject.match(fullFilename):
+            if Utils._Compare_RegexObject.match(filename) or Utils._Compare_RegexObject.match(file):
                 return 1
             else:
                 return 0
@@ -285,13 +286,13 @@ class Utils(object):
             if sys.platform == "win32":
                 pattern = pattern.lower()
 
-            return int(fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(fullFilename, pattern))
+            return int(fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(file, pattern))
         else:
             if sys.platform == "win32":
                 pattern = pattern.lower()
 
             return max(difflib.SequenceMatcher(None, filename, pattern).ratio(),
-                       difflib.SequenceMatcher(None, fullFilename, pattern).ratio())
+                       difflib.SequenceMatcher(None, file, pattern).ratio())
 
     @staticmethod
     def PathContains(path: str, substring: str) -> bool:
@@ -1101,13 +1102,13 @@ class ParallelRunner:
             time.sleep(0.25)
 
 
-def unique(lst: typing.List[str]) -> typing.List[str]:
+def unique(lst: typing.List[typing.Tuple[str, str]]) -> typing.List[typing.Tuple[str, str]]:
     temp = {}
 
     for i in range(len(lst)):
         item = lst[i]
 
-        key = os.path.normcase(item)
+        key = (os.path.normcase(item[0]), os.path.normcase(item[1]))
         if key in temp:
             continue
 
@@ -1144,10 +1145,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     if len(allFiles) == 0:
         allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions, False, config.Executables))
         allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False, config.Executables))
-        for file in Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True,
-                                                   config.Executables, config.IgnoredDirectories):
-            if file not in allFiles:
-                allFiles.append(file)
+        allFiles.extend(Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True,
+                                                       config.Executables, config.IgnoredDirectories))
         allFiles = unique(allFiles)
 
     if overwriteCache:
@@ -1155,11 +1154,11 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             pickle.dump((time.time(), allFiles), f)
 
     similarities = []
-    for file in allFiles:
+    for (path, file) in allFiles:
         passedThrough = True
 
         for (include, directoryFilter) in config.DirectoryFilter:
-            (directory, _) = os.path.split(file)
+            (directory, _) = os.path.split(path)
             directory = directory.lower()
 
             if (include and directoryFilter.lower() not in directory) or \
@@ -1170,8 +1169,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
         if not passedThrough:
             continue
 
-        similarities.append((file, Utils.ComparePathAndPattern(file, target, config.FuzzyMatch, config.RegexTargetMatch,
-                                                               config.WildcardTargetMatch)))
+        similarities.append((path, Utils.ComparePathAndPattern(file, target, config.FuzzyMatch,
+                                                               config.RegexTargetMatch, config.WildcardTargetMatch)))
 
     exactMatches = [x[0] for x in similarities if x[1] == 1.0]
 
