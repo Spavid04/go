@@ -1,4 +1,4 @@
-# VERSION 98    REV 21.09.23.03
+# VERSION 99    REV 21.09.24.01
 
 import ctypes
 import difflib
@@ -126,8 +126,9 @@ def PrintHelp():
     print("                             if none, the argument list gets flattened to multiple arguments, and must be last")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
     print("                    rm:rgx   filters out arguments that don't match (anywhere) the specified regex")
-    print("                    rs:rgx   returns the first match using the specified regex, for every argument")
-    print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx")
+    print("                    rs:rgx   returns group 1 (else the first match) using the specified regex, for every argument")
+    print("                             appending a number after rs will select that group instead of the first one (eg. rs3:...)")
+    print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx; allows setting a group number like \"rs:rgx\"")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
@@ -776,12 +777,20 @@ class GoConfig:
 
                         func = eval("lambda x : x[" + expression + "]")
                         modifiers.append(("ss", func))
-                    elif m := re.match("(r[ms]+):(.+)", modifierText, re.I):
-                        if len(m.group(1)) == 2:
-                            modifiers.append((m.group(1), m.group(2)))
-                        elif m.group(1) == "rms":
-                            modifiers.append(("rm", m.group(2)))
-                            modifiers.append(("rs", m.group(2)))
+                    elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
+                        modifierType = m.group(1)
+                        groupNumber = 1
+                        modifierValue = m.group(3)
+                        if m.group(2):
+                            groupNumber = int(m.group(2))
+
+                        if modifierType == "rm":
+                            modifiers.append((modifierType, modifierValue))
+                        elif modifierType == "rs":
+                            modifiers.append((modifierType, (groupNumber, modifierValue)))
+                        elif modifierType == "rms":
+                            modifiers.append(("rm", modifierValue))
+                            modifiers.append(("rs", (groupNumber, modifierValue)))
 
                 elif match.group(2):
                     applyArgument = match.group(2)
@@ -875,11 +884,16 @@ class GoConfig:
                     regex = re.compile(modifierArgument, re.I)
                     applyArgument.List = [x for x in applyArgument.List if regex.search(x)]
                 elif modifierType == "rs":
-                    regex = re.compile(modifierArgument, re.I)
+                    (groupNumber, regexString) = modifierArgument
+                    regex = re.compile(regexString, re.I)
                     for i in range(len(applyArgument.List)):
                         match = regex.search(applyArgument.List[i])
                         if match:
-                            applyArgument.List[i] = match.group(0)
+                            groups = match.groups()
+                            if groupNumber <= regex.groups:
+                                applyArgument.List[i] = groups[groupNumber - 1]
+                            else:
+                                applyArgument.List[i] = match.group(0) # entire match
                         else:
                             applyArgument.List[i] = ""
 
