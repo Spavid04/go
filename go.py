@@ -1,4 +1,4 @@
-# VERSION 99    REV 21.09.24.01
+# VERSION 100    REV 21.09.26.01
 
 import ctypes
 import difflib
@@ -112,6 +112,7 @@ def PrintHelp():
     print("                Apply-specific arguments must always come last: [apply type](\\+[modifier])*(-[arguments])?")
     print("                Types of apply:")
     print("                    C: reads the input text from the clipboard as lines")
+    print("                    D: needs an *-int, duplicates the specified /*apply list, without any of its modifiers")
     print("                    F: reads the lines of a file, specified with *-path")
     print("                    G: reads the output lines of a go command, specified with *-command")
     print("                    H: fetches lines from the specified URL")
@@ -523,7 +524,7 @@ class Utils(object):
 
 class GoConfig:
     _QuietRegex = re.compile("^/(q+)uiet$", re.I)
-    _ApplyRegex = re.compile("^/([cfghipr])apply(.*)$", re.I)
+    _ApplyRegex = re.compile("^/([cdfghipr])apply(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -838,9 +839,13 @@ class GoConfig:
 
         # region generate lists
 
+        duplicatesToDo = []
         for applyArgument in self.ApplyLists:
             if applyArgument.SourceType == "c":
                 applyArgument.List = [x for x in Utils.GetClipboardText().split("\r\n") if len(x) > 0]
+            elif applyArgument.SourceType == "d":
+                # processed right after every other list
+                duplicatesToDo.append((self.ApplyLists[int(applyArgument.Source)], applyArgument))
             elif applyArgument.SourceType == "f":
                 applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
             elif applyArgument.SourceType == "g":
@@ -855,6 +860,9 @@ class GoConfig:
                 rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
                     applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
+
+        for (sourceList, destList) in duplicatesToDo:
+            destList.List = list(sourceList.List)
 
         # endregion
 
