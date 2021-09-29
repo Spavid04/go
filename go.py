@@ -1,4 +1,4 @@
-# VERSION 100    REV 21.09.26.01
+# VERSION 101    REV 21.09.30.01
 
 import ctypes
 import difflib
@@ -15,6 +15,7 @@ import threading
 import time
 import typing
 import shlex
+import stat
 import sys
 import unicodedata
 import urllib.request
@@ -53,6 +54,7 @@ def PrintHelp():
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
     print("  AlwaysCache [bool]: always use the path cache by default")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
+    print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
     print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
     print("  whether to include or ignore matches.")
@@ -66,6 +68,7 @@ def PrintHelp():
     print("/ign[+-]XXXX  : Adds or removes the directory to the ignored directories list (recursive).")
     print("/executables  : Toggle inclusion of files that are marked as executables, regardless of extension.")
     print("                By default, Windows excludes them, and UNIX includes them.")
+    print("/hidden[+-]   : Includes or excludes hidden files and directories. Omitting + or - toggles the setting.")
     print("Any of the previous commands will temporarily disable the path cache.")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
@@ -189,8 +192,17 @@ class Utils(object):
         return scriptDir
 
     @staticmethod
+    def IsHidden(path: str) -> bool:
+        if sys.platform == "win32":
+            s = os.stat(path)
+            return bool(s.st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN)
+        else:
+            filename = os.path.split(path)[1]
+            return filename[0] == "."
+
+    @staticmethod
     def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str],
-                                 recursive: bool, includeModX: bool,
+                                 recursive: bool, includeModX: bool, includeHidden: bool,
                                  ignoredDirectories: typing.Optional[typing.List[str]] = None) -> \
             typing.List[typing.Tuple[str, str]]:
         matches = []
@@ -232,15 +244,24 @@ class Utils(object):
                                 and not any(fnmatch.fnmatch(file, x) for x in gofilterIncludes):
                             files.remove(file)
 
-                if recursive and ignoredDirectories:
+                if recursive and (ignoredDirectories or not includeHidden):
                     dirs_copy = list(dirs)
                     for dir in dirs_copy:
                         abspath = os.path.abspath(os.path.join(root, dir))
+                        if not includeHidden and Utils.IsHidden(abspath):
+                            dirs.remove(dir)
+                            continue
                         if any(os.path.samefile(abspath, x) for x in ignoredDirectories):
                             dirs.remove(dir)
+                            continue
 
                 for file in files:
                     fullpath = os.path.join(root, file)
+
+                    if not includeHidden:
+                        if Utils.IsHidden(fullpath):
+                            continue
+
                     canAdd = False
                     if includeModX:
                         if os.path.isfile(fullpath) and os.access(fullpath, os.X_OK):
@@ -532,7 +553,8 @@ class GoConfig:
         self.TargetedExtensions = [".exe", ".cmd", ".bat", ".py"]
         self.TargetedDirectories = []
         self.IgnoredDirectories = []
-        self.Executables = False if sys.platform == "win32" else True
+        self.IncludeAnyExecutables = False if sys.platform == "win32" else True
+        self.IncludeHidden = False
 
         self.UsePathCache = False
         self.RefreshPathCache = False
@@ -609,6 +631,8 @@ class GoConfig:
             self.UsePathCache = True
         if "NoFuzzyMatch" in config and config["NoFuzzyMatch"]:
             self.FuzzyMatch = False
+        if "IncludeHidden" in config:
+            self.IncludeHidden = bool(config["IncludeHidden"])
 
     class ApplyElement:
         def __init__(self,
@@ -666,7 +690,16 @@ class GoConfig:
                     self.TargetedExtensions.append(extension)
             self.UsePathCache = False
         elif lower == "/executables":
-            self.Executables = not self.Executables
+            self.IncludeAnyExecutables = not self.IncludeAnyExecutables
+            self.UsePathCache = False
+        elif lower.startswith("/hidden"):
+            action = lower[7] if len(lower) == 8 else None
+            if action == "+":
+                self.IncludeHidden = True
+            elif action == "-":
+                self.IncludeHidden = False
+            else:
+                self.IncludeHidden = not self.IncludeHidden
             self.UsePathCache = False
 
         elif lower.startswith("/cache"):
@@ -1156,7 +1189,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             with open(cachePath, "rb") as f:
                 (lastRefresh, cachedPaths) = pickle.load(f)
 
-            if lastRefresh < (time.time() - (60*60*24*7)):
+            if lastRefresh < (time.time() - (60*60)):
                 overwriteCache = True
             else:
                 if not config.RefreshPathCache:
@@ -1165,10 +1198,13 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             overwriteCache = True
 
     if len(allFiles) == 0:
-        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions, False, config.Executables))
-        allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions, False, config.Executables))
-        allFiles.extend(Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions, True,
-                                                       config.Executables, config.IgnoredDirectories))
+        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions,
+                                                       False, config.IncludeAnyExecutables, config.IncludeHidden))
+        allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions,
+                                                       False, config.IncludeAnyExecutables, config.IncludeHidden))
+        allFiles.extend(Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions,
+                                                       True, config.IncludeAnyExecutables, config.IncludeHidden,
+                                                       config.IgnoredDirectories))
         allFiles = unique(allFiles)
 
     if overwriteCache:
