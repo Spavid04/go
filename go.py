@@ -1,4 +1,4 @@
-# VERSION 101    REV 21.09.30.01
+# VERSION 102    REV 21.09.30.02
 
 import ctypes
 import difflib
@@ -117,7 +117,7 @@ def PrintHelp():
     print("                    C: reads the input text from the clipboard as lines")
     print("                    D: needs an *-int, duplicates the specified /*apply list, without any of its modifiers")
     print("                    F: reads the lines of a file, specified with *-path")
-    print("                    G: reads the output lines of a go command, specified with *-command")
+    print("                    G: reads the output lines of a go command, specified with *-command; max quiet level is implied")
     print("                    H: fetches lines from the specified URL")
     print("                    I: reads the immediate string as a comma separated list, specified with *-text")
     print("                    P: reads the input lines from stdin until EOF; returns the same arguments if used again")
@@ -127,7 +127,9 @@ def PrintHelp():
     print("                    f:fmt    format the string using a standard printf format")
     print("                    fi/f:fmt same as f:fmt modifier, but treats input as ints or floats")
     print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
-    print("                             if none, the argument list gets flattened to multiple arguments, and must be last")
+    print("                             if none, the argument list gets flattened to multiple arguments, and should be last")
+    print("                    g:args   run go with the specified arguments to process the incoming list and return a new one")
+    print("                             the sub-go will receive its arguments with via stdin, so /papply should be used")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
     print("                    rm:rgx   filters out arguments that don't match (anywhere) the specified regex")
     print("                    rs:rgx   returns group 1 (else the first match) using the specified regex, for every argument")
@@ -379,11 +381,19 @@ class Utils(object):
             return [x.rstrip("\r\n") for x in f.readlines()]
 
     @staticmethod
-    def CaptureOutput(command: str) -> typing.List[str]:
+    def CaptureGoOutput(command: str, stdinLines: typing.List[str] = None) -> typing.List[str]:
         lines = []
 
-        process = subprocess.Popen("go " + command, shell=True, stdout=subprocess.PIPE)
-        for line in process.stdout:
+        process = subprocess.Popen("go /qqquiet " + command, shell=True, stdout=subprocess.PIPE, stderr=sys.stderr,
+                                   stdin=subprocess.PIPE if stdinLines else sys.stdin)
+
+        if stdinLines:
+            (stdout, _) = process.communicate(input=os.linesep.join(stdinLines).encode("utf-8"))
+            stdout = stdout.splitlines()
+        else:
+            stdout = process.stdout
+
+        for line in stdout:
             lines.append(line.rstrip().decode("utf-8"))
 
         return lines
@@ -794,9 +804,11 @@ class GoConfig:
                         modifiers.append(("e", None))
                     elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
                         modifiers.append((m.group(1), m.group(2)))
-                    elif m := re.match("fl:?(.+)?", modifierText, re.I):
-                        separator = None if (m.group(1) is None and ":" not in modifierText) else m.group(1)
+                    elif m := re.match("fl(?::(.+))?", modifierText, re.I):
+                        separator = m.group(1) or None
                         modifiers.append(("fl", separator))
+                    elif m := re.match("g:(.+)", modifierText, re.I):
+                        modifiers.append(("g", m.group(1)))
                     elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
                         x = m.group(1) or ""
                         y = m.group(3) or ""
@@ -882,7 +894,7 @@ class GoConfig:
             elif applyArgument.SourceType == "f":
                 applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
             elif applyArgument.SourceType == "g":
-                applyArgument.List = Utils.CaptureOutput(applyArgument.Source)
+                applyArgument.List = Utils.CaptureGoOutput(applyArgument.Source)
             elif applyArgument.SourceType == "h":
                 applyArgument.List = Utils.GetTextFromUrl(applyArgument.Source)
             elif applyArgument.SourceType == "i":
@@ -919,6 +931,8 @@ class GoConfig:
                         applyArgument.List = [modifierArgument.join(applyArgument.List)]
                     else:
                         applyArgument.List = [applyArgument.List]
+                elif modifierType == "g":
+                    applyArgument.List = Utils.CaptureGoOutput(modifierArgument, applyArgument.List)
                 elif modifierType == "ss":
                     applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
                 elif modifierType == "rm":
