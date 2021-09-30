@@ -1,8 +1,9 @@
-# VERSION 102    REV 21.09.30.02
+# VERSION 104    REV 21.10.02.01
 
 import ctypes
 import difflib
 import fnmatch
+import importlib.util
 import itertools
 import json
 import os
@@ -41,6 +42,7 @@ def PrintHelp():
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
     print("Run with /examples to print some usage examples.")
+    print("Run with /modulehelp to print help about external py scripts.")
     print()
     print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
     print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
@@ -114,14 +116,15 @@ def PrintHelp():
     print("                Accepts a number of modifiers with +[modifier], before any apply-specific arguments.")
     print("                Apply-specific arguments must always come last: [apply type](\\+[modifier])*(-[arguments])?")
     print("                Types of apply:")
-    print("                    C: reads the input text from the clipboard as lines")
-    print("                    D: needs an *-int, duplicates the specified /*apply list, without any of its modifiers")
-    print("                    F: reads the lines of a file, specified with *-path")
-    print("                    G: reads the output lines of a go command, specified with *-command; max quiet level is implied")
-    print("                    H: fetches lines from the specified URL")
-    print("                    I: reads the immediate string as a comma separated list, specified with *-text")
-    print("                    P: reads the input lines from stdin until EOF; returns the same arguments if used again")
-    print("                    R: generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
+    print("                    C:   reads the input text from the clipboard as lines")
+    print("                    D:   needs an *-int, duplicates the specified /*apply list, without any of its modifiers")
+    print("                    F:   reads the lines of a file, specified with *-path")
+    print("                    G:   reads the output lines of a go command, specified with *-command; max quiet level is implied")
+    print("                    H:   fetches lines from the specified URL")
+    print("                    I:   reads the immediate string as a comma separated list, specified with *-text")
+    print("                    P:   reads the input lines from stdin until EOF; returns the same arguments if used again")
+    print("                    PY:  uses the specified py script to fetch an apply list; accepts *-path[,arg]; see go /modulehelp")
+    print("                    R:   generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
     print("                    f:fmt    format the string using a standard printf format")
@@ -131,6 +134,7 @@ def PrintHelp():
     print("                    g:args   run go with the specified arguments to process the incoming list and return a new one")
     print("                             the sub-go will receive its arguments with via stdin, so /papply should be used")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
+    print("                    py:path[,arg] uses the specified py script to modify an apply list; see go /modulehelp")
     print("                    rm:rgx   filters out arguments that don't match (anywhere) the specified regex")
     print("                    rs:rgx   returns group 1 (else the first match) using the specified regex, for every argument")
     print("                             appending a number after rs will select that group instead of the first one (eg. rs3:...)")
@@ -179,6 +183,18 @@ def PrintExamples():
     print()
     print("Concatenate files using cmd's copy and go's format+flatten:")
     print("    dir /b *.bin | go /asscript /papply+[f:\\\"%s\\\"]+[fl:+] copy /b %%%% out.bin")
+
+
+def PrintModulehelp():
+    if not can_print(2):
+        return
+
+    print("Go can be extended with external python modules (scripts), allowing for dynamic creation or modification of apply arguments.")
+    print("A go module can contain any code, and can implement any of the 4 top-level functions, seen below:")
+    print("    Init(config):  initialises the module, with the specified GoConfig; called only once at startup")
+    print("    Exit():  clean up the module, if necessary; called only once at end of go")
+    print("    GetApplyList(context, argument):  return a list of strings to be used as an apply source (context); accepts a string argument")
+    print("    ModifyApplyList(context, applyList, argument):  modify the source (context) list of strings (applyList) and return a list of strings; accepts a string argument")
 
 
 class Utils(object):
@@ -553,9 +569,42 @@ class Utils(object):
         return lines
 
 
+class ExternalModule:
+    def __init__(self, path: str):
+        self.path = path
+
+        moduleName = os.path.splitext(os.path.split(self.path)[1])[0]
+        self.spec = importlib.util.spec_from_file_location(moduleName, self.path)
+        self.module = importlib.util.module_from_spec(self.spec)
+        self.spec.loader.exec_module(self.module)
+
+        self._has_GetApplyList = hasattr(self.module, "GetApplyList")
+        self._has_ModifyApplyList = hasattr(self.module, "ModifyApplyList")
+
+    def Init(self, config: "GoConfig"):
+        if hasattr(self.module, "Init"):
+            self.module.Init(config)
+
+    def Exit(self):
+        if hasattr(self.module, "Exit"):
+            self.module.Exit()
+
+    def GetApplyList(self, context: "GoConfig.ApplyElement", argument: typing.Optional[str]) -> typing.List[str]:
+        if self._has_GetApplyList:
+            return self.module.GetApplyList(context, argument)
+        else:
+            raise NotImplementedError()
+
+    def ModifyApplyList(self, context: "GoConfig.ApplyElement", applyList: typing.List[str], argument: typing.Optional[str]) -> typing.List[str]:
+        if self._has_ModifyApplyList:
+            return self.module.ModifyApplyList(context, applyList, argument)
+        else:
+            raise NotImplementedError()
+
+
 class GoConfig:
     _QuietRegex = re.compile("^/(q+)uiet$", re.I)
-    _ApplyRegex = re.compile("^/([cdfghipr])apply(.*)$", re.I)
+    _ApplyRegex = re.compile("^/([cdfghipr]|py)apply(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -598,6 +647,8 @@ class GoConfig:
         self.RolloverZero = False
         self.RepeatCount = None
         self.CrossJoin = False
+
+        self.ExternalModules = {}
 
         self.ReloadConfig(False)
 
@@ -660,6 +711,9 @@ class GoConfig:
 
         if lower == "/examples":
             PrintExamples()
+            exit(0)
+        elif lower == "/modulehelp":
+            PrintModulehelp()
             exit(0)
 
         elif lower.startswith("/config-"):
@@ -809,20 +863,10 @@ class GoConfig:
                         modifiers.append(("fl", separator))
                     elif m := re.match("g:(.+)", modifierText, re.I):
                         modifiers.append(("g", m.group(1)))
-                    elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
-                        x = m.group(1) or ""
-                        y = m.group(3) or ""
-                        z = m.group(5) or ""
-                        colons = bool(m.group(2)) + bool(m.group(4))
-
-                        expression = x
-                        if colons >= 1:
-                            expression += ":" + y
-                        if colons == 2:
-                            expression += ":" + z
-
-                        func = eval("lambda x : x[" + expression + "]")
-                        modifiers.append(("ss", func))
+                    elif m := re.match("py:([^,]+)(?:,(.+))?", modifierText, re.I):
+                        modulePath = m.group(1)
+                        moduleArgument = m.group(2)
+                        modifiers.append(("py", (modulePath, moduleArgument)))
                     elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
                         modifierType = m.group(1)
                         groupNumber = 1
@@ -837,6 +881,20 @@ class GoConfig:
                         elif modifierType == "rms":
                             modifiers.append(("rm", modifierValue))
                             modifiers.append(("rs", (groupNumber, modifierValue)))
+                    elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
+                        x = m.group(1) or ""
+                        y = m.group(3) or ""
+                        z = m.group(5) or ""
+                        colons = bool(m.group(2)) + bool(m.group(4))
+
+                        expression = x
+                        if colons >= 1:
+                            expression += ":" + y
+                        if colons == 2:
+                            expression += ":" + z
+
+                        func = eval("lambda x : x[" + expression + "]")
+                        modifiers.append(("ss", func))
 
                 elif match.group(2):
                     applyArgument = match.group(2)
@@ -877,6 +935,20 @@ class GoConfig:
 
         return True
 
+    def _getOrInitExternalModule(self, path: str) -> ExternalModule:
+        if path in self.ExternalModules:
+            return self.ExternalModules[path]
+        else:
+            if os.path.isabs(path):
+                module = ExternalModule(path)
+            elif os.path.isfile(relative := os.path.join(os.path.split(__file__)[0], "go_modules", path)):
+                module = ExternalModule(relative)
+            else:
+                module = ExternalModule(path)
+            module.Init(self)
+            self.ExternalModules[path] = module
+            return module
+
     def ProcessApplyArguments(self, targetArguments: typing.List[str]) -> typing.List[typing.List[str]]:
         if len(self.ApplyLists) == 0:
             repeat = 1 if self.RepeatCount is None else self.RepeatCount
@@ -901,6 +973,13 @@ class GoConfig:
                 applyArgument.List = applyArgument.Source.split(",")
             elif applyArgument.SourceType == "p":
                 applyArgument.List = Utils.ReadStdin()
+            elif applyArgument.SourceType == "py":
+                pyapplyArguments = applyArgument.Source.split(",", 1)
+                modulePath = pyapplyArguments[0]
+                moduleArgument = None
+                if len(pyapplyArguments) == 2:
+                    moduleArgument = pyapplyArguments[1]
+                applyArgument.List = self._getOrInitExternalModule(modulePath).GetApplyList(applyArgument, moduleArgument)
             elif applyArgument.SourceType == "r":
                 rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
@@ -933,6 +1012,9 @@ class GoConfig:
                         applyArgument.List = [applyArgument.List]
                 elif modifierType == "g":
                     applyArgument.List = Utils.CaptureGoOutput(modifierArgument, applyArgument.List)
+                elif modifierType == "py":
+                    (modulePath, moduleArgument) = modifierArgument
+                    applyArgument.List = self._getOrInitExternalModule(modulePath).ModifyApplyList(applyArgument, applyArgument.List, moduleArgument)
                 elif modifierType == "ss":
                     applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
                 elif modifierType == "rm":
@@ -1417,4 +1499,6 @@ if __name__ == "__main__":
     targetArguments = config.ProcessApplyArguments(targetArguments)
 
     result = Run(config, target, targetArguments)
+    for modulePath in config.ExternalModules:
+        config.ExternalModules[modulePath].Exit()
     exit(result or 0)
