@@ -1,4 +1,4 @@
-# VERSION 104    REV 21.10.02.01
+# VERSION 105    REV 21.10.06.01
 
 import ctypes
 import difflib
@@ -57,6 +57,7 @@ def PrintHelp():
     print("  AlwaysCache [bool]: always use the path cache by default")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
+    print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
     print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
     print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
     print("  whether to include or ignore matches.")
@@ -568,6 +569,16 @@ class Utils(object):
 
         return lines
 
+    @staticmethod
+    def GetDefaultExecutableExtensions() -> typing.List[str]:
+        if sys.platform == "win32":
+            extensions = {".exe", ".com", ".bat", ".cmd", ".ps1", ".py"}
+            extensions.update(x.lower() for x in os.environ["PATH"].split(os.pathsep))
+            extensions = list(extensions)
+        else:
+            extensions = [".sh", ".py"]
+        return extensions
+
 
 class ExternalModule:
     def __init__(self, path: str):
@@ -609,12 +620,13 @@ class GoConfig:
     def __init__(self):
         self.ConfigFile = "go.config"
 
-        self.TargetedExtensions = [".exe", ".cmd", ".bat", ".py"]
+        self.TargetedExtensions = Utils.GetDefaultExecutableExtensions()
         self.TargetedDirectories = []
         self.IgnoredDirectories = []
         self.IncludeAnyExecutables = False if sys.platform == "win32" else True
         self.IncludeHidden = False
 
+        self.CacheInvalidationTime = 1
         self.UsePathCache = False
         self.RefreshPathCache = False
         self.FuzzyMatch = True
@@ -694,6 +706,8 @@ class GoConfig:
             self.FuzzyMatch = False
         if "IncludeHidden" in config:
             self.IncludeHidden = bool(config["IncludeHidden"])
+        if "CacheInvalidationTime" in config:
+            self.CacheInvalidationTime = float(config["CacheInvalidationTime"])
 
     class ApplyElement:
         def __init__(self,
@@ -1285,7 +1299,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             with open(cachePath, "rb") as f:
                 (lastRefresh, cachedPaths) = pickle.load(f)
 
-            if lastRefresh < (time.time() - (60*60)):
+            if lastRefresh < (time.time() - int(config.CacheInvalidationTime * 3600)):
                 overwriteCache = True
             else:
                 if not config.RefreshPathCache:
