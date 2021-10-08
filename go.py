@@ -1,4 +1,4 @@
-# VERSION 105    REV 21.10.06.01
+# VERSION 106    REV 21.10.08.01
 
 import ctypes
 import difflib
@@ -141,6 +141,7 @@ def PrintHelp():
     print("                             appending a number after rs will select that group instead of the first one (eg. rs3:...)")
     print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx; allows setting a group number like \"rs:rgx\"")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
+    print("                    w:pat    retains only arguments that match the specified wildcard pattern; use w-:pat to invert")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
@@ -909,6 +910,10 @@ class GoConfig:
 
                         func = eval("lambda x : x[" + expression + "]")
                         modifiers.append(("ss", func))
+                    elif m := re.match("w(-)?:(.+)", modifierText, re.I):
+                        inverted = bool(m.group(1))
+                        pattern = m.group(2)
+                        modifiers.append(("w", (inverted, pattern)))
 
                 elif match.group(2):
                     applyArgument = match.group(2)
@@ -1029,8 +1034,6 @@ class GoConfig:
                 elif modifierType == "py":
                     (modulePath, moduleArgument) = modifierArgument
                     applyArgument.List = self._getOrInitExternalModule(modulePath).ModifyApplyList(applyArgument, applyArgument.List, moduleArgument)
-                elif modifierType == "ss":
-                    applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
                 elif modifierType == "rm":
                     regex = re.compile(modifierArgument, re.I)
                     applyArgument.List = [x for x in applyArgument.List if regex.search(x)]
@@ -1047,6 +1050,11 @@ class GoConfig:
                                 applyArgument.List[i] = match.group(0) # entire match
                         else:
                             applyArgument.List[i] = ""
+                elif modifierType == "ss":
+                    applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
+                elif modifierType == "w":
+                    (inverted, pattern) = modifierArgument
+                    applyArgument.List = [x for x in applyArgument.List if fnmatch.fnmatch(x, pattern) is not inverted] # big brain inversion (== xor (== is not))
 
         # endregion
 
