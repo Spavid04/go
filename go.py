@@ -1,4 +1,4 @@
-# VERSION 106    REV 21.10.08.01
+# VERSION 107    REV 21.10.19.01
 
 import ctypes
 import difflib
@@ -140,7 +140,10 @@ def PrintHelp():
     print("                    rs:rgx   returns group 1 (else the first match) using the specified regex, for every argument")
     print("                             appending a number after rs will select that group instead of the first one (eg. rs3:...)")
     print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx; allows setting a group number like \"rs:rgx\"")
-    print("                    ss:x:y:z extracts a substring from the argument with a python-like indexer expression")
+    print("                    s:expr   extract only the specified argument indexes from the source list; use s-:expr to invert")
+    print("                             expr is a comma-separated list of python-like array indexer")
+    print("                             all indices are relative to the original list and are processed in the given order")
+    print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
     print("                    w:pat    retains only arguments that match the specified wildcard pattern; use w-:pat to invert")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source; negatives allowed]%%")
@@ -580,6 +583,55 @@ class Utils(object):
             extensions = [".sh", ".py"]
         return extensions
 
+    @staticmethod
+    def GetSliceFunc(sliceText: str) -> typing.Optional[typing.Callable]:
+        m = re.match("^(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?$", sliceText, re.I)
+        if not m:
+            return None
+
+        x = m.group(1) or ""
+        y = m.group(3) or ""
+        z = m.group(5) or ""
+        colons = bool(m.group(2)) + bool(m.group(4))
+
+        expression = x
+        if colons >= 1:
+            expression += ":" + y
+        if colons == 2:
+            expression += ":" + z
+
+        func = eval("lambda x : x[" + expression + "]")
+        return func
+
+    @staticmethod
+    def ApplySlices(slices: typing.List[typing.Callable], sourceArray: list, excludeSlicesInsteadOfInclude: bool) -> typing.Optional[list]:
+        if len(sourceArray) == 0:
+            return []
+        if len(slices) == 0 and excludeSlicesInsteadOfInclude:
+            return sourceArray
+
+        # the following is utter shit, but it works
+        indices = list(range(len(sourceArray)))
+        chosenIndices = []
+        for s in slices:
+            sliceIndices = s(indices)
+            if isinstance(sliceIndices, int):
+                chosenIndices.append([sliceIndices])
+            else:
+                chosenIndices.append(sliceIndices)
+
+        if excludeSlicesInsteadOfInclude:
+            for s in chosenIndices:
+                for i in s:
+                    indices[i] = -1
+            return [sourceArray[x] for x in indices if x != -1]
+        else:
+            recreatedArray = []
+            for s in chosenIndices:
+                for i in s:
+                    recreatedArray.append(sourceArray[i])
+            return recreatedArray
+
 
 class ExternalModule:
     def __init__(self, path: str):
@@ -867,9 +919,7 @@ class GoConfig:
             for match in argregex.finditer(argsstr):
                 if match.group(1):
                     modifierText = match.group(1)
-                    if m := re.match("i:(\\d+)", modifierText, re.I):
-                        modifiers.append(("i", int(m.group(1))))
-                    elif modifierText == "e":
+                    if modifierText == "e":
                         modifiers.append(("e", None))
                     elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
                         modifiers.append((m.group(1), m.group(2)))
@@ -878,6 +928,8 @@ class GoConfig:
                         modifiers.append(("fl", separator))
                     elif m := re.match("g:(.+)", modifierText, re.I):
                         modifiers.append(("g", m.group(1)))
+                    elif m := re.match("i:(\\d+)", modifierText, re.I):
+                        modifiers.append(("i", int(m.group(1))))
                     elif m := re.match("py:([^,]+)(?:,(.+))?", modifierText, re.I):
                         modulePath = m.group(1)
                         moduleArgument = m.group(2)
@@ -896,20 +948,12 @@ class GoConfig:
                         elif modifierType == "rms":
                             modifiers.append(("rm", modifierValue))
                             modifiers.append(("rs", (groupNumber, modifierValue)))
-                    elif m := re.match("ss:(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?", modifierText, re.I):
-                        x = m.group(1) or ""
-                        y = m.group(3) or ""
-                        z = m.group(5) or ""
-                        colons = bool(m.group(2)) + bool(m.group(4))
-
-                        expression = x
-                        if colons >= 1:
-                            expression += ":" + y
-                        if colons == 2:
-                            expression += ":" + z
-
-                        func = eval("lambda x : x[" + expression + "]")
-                        modifiers.append(("ss", func))
+                    elif m := re.match("s(-?):([\\d:,-]+)", modifierText, re.I):
+                        excludeInstead = bool(m.group(1))
+                        expression = m.group(2)
+                        modifiers.append(("s", (excludeInstead, expression)))
+                    elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
+                        modifiers.append(("ss", m.group(1)))
                     elif m := re.match("w(-)?:(.+)", modifierText, re.I):
                         inverted = bool(m.group(1))
                         pattern = m.group(2)
@@ -1050,8 +1094,17 @@ class GoConfig:
                                 applyArgument.List[i] = match.group(0) # entire match
                         else:
                             applyArgument.List[i] = ""
+                elif modifierType == "s":
+                    (excludeInstead, expression) = modifierArgument
+                    slices = []
+                    for expr in expression.split(","):
+                        s = Utils.GetSliceFunc(expr)
+                        if s:
+                            slices.append(s)
+                    applyArgument.List = Utils.ApplySlices(slices, applyArgument.List, excludeInstead)
                 elif modifierType == "ss":
-                    applyArgument.List = [modifierArgument(x) for x in applyArgument.List]
+                    s = Utils.GetSliceFunc(modifierArgument)
+                    applyArgument.List = [s(x) for x in applyArgument.List]
                 elif modifierType == "w":
                     (inverted, pattern) = modifierArgument
                     applyArgument.List = [x for x in applyArgument.List if fnmatch.fnmatch(x, pattern) is not inverted] # big brain inversion (== xor (== is not))
