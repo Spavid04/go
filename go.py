@@ -1,4 +1,4 @@
-# VERSION 107    REV 21.10.19.01
+# VERSION 108    REV 21.10.22.01
 
 import ctypes
 import difflib
@@ -146,7 +146,8 @@ def PrintHelp():
     print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
     print("                    w:pat    retains only arguments that match the specified wildcard pattern; use w-:pat to invert")
     print("                Inline (inside command arguments) markers:")
-    print("                    Syntax: %%[index of apply source; negatives allowed]%%")
+    print("                    Syntax: %%[index of apply source, negatives allowed]%%.")
+    print("                    You can replace % with $ if your shell treats either one differently.")
     print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
     print("                    Replacement is also done in quoted or complex arguments.")
     print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
@@ -1196,7 +1197,7 @@ class GoConfig:
 
         return newArguments
 
-    _InlineMarkerRegex = re.compile(r"%%(-?\d*)%%", re.I)
+    _InlineMarkerRegex = re.compile(r"(?:%%|\$\$)(-?\d*)(?:%%|\$\$)", re.I)
 
     def _ProcessInlineMarker(self, argument: str) -> typing.Union[str, typing.List[str]]:
         matches = list(GoConfig._InlineMarkerRegex.finditer(argument))
