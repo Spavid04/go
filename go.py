@@ -1,4 +1,4 @@
-# VERSION 108    REV 21.10.22.01
+# VERSION 109    REV 21.11.01.01
 
 import ctypes
 import difflib
@@ -143,8 +143,12 @@ def PrintHelp():
     print("                    s:expr   extract only the specified argument indexes from the source list; use s-:expr to invert")
     print("                             expr is a comma-separated list of python-like array indexer")
     print("                             all indices are relative to the original list and are processed in the given order")
+    print("                    sp:pat   split all agruments into more arguments, separated by the given pat regex pattern")
+    print("                             excludes blank parts")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
     print("                    w:pat    retains only arguments that match the specified wildcard pattern; use w-:pat to invert")
+    print("                    xtr:pat  extracts the specified regex match from all arguments, and then flattens the result")
+    print("                             returns group 1 (else the first match), or allows a group number like rs:rgx")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source, negatives allowed]%%.")
     print("                    You can replace % with $ if your shell treats either one differently.")
@@ -953,12 +957,21 @@ class GoConfig:
                         excludeInstead = bool(m.group(1))
                         expression = m.group(2)
                         modifiers.append(("s", (excludeInstead, expression)))
+                    elif m := re.match("sp:(.+)", modifierText, re.I):
+                        modifiers.append(("sp", m.group(1)))
                     elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
                         modifiers.append(("ss", m.group(1)))
                     elif m := re.match("w(-)?:(.+)", modifierText, re.I):
                         inverted = bool(m.group(1))
                         pattern = m.group(2)
                         modifiers.append(("w", (inverted, pattern)))
+                    elif m := re.match("xtr(\\d+)?:(.+)", modifierText, re.I):
+                        groupNumber = 1
+                        pattern = m.group(2)
+                        if m.group(1):
+                            groupNumber = int(m.group(1))
+
+                        modifiers.append(("xtr", (groupNumber, pattern)))
 
                 elif match.group(2):
                     applyArgument = match.group(2)
@@ -1103,12 +1116,23 @@ class GoConfig:
                         if s:
                             slices.append(s)
                     applyArgument.List = Utils.ApplySlices(slices, applyArgument.List, excludeInstead)
+                elif modifierType == "sp":
+                    pattern = modifierArgument
+                    newList = [re.split(pattern, x) for x in applyArgument.List]
+                    applyArgument.List = [x for l in newList for x in l if len(x) > 0]
                 elif modifierType == "ss":
                     s = Utils.GetSliceFunc(modifierArgument)
                     applyArgument.List = [s(x) for x in applyArgument.List]
                 elif modifierType == "w":
                     (inverted, pattern) = modifierArgument
                     applyArgument.List = [x for x in applyArgument.List if fnmatch.fnmatch(x, pattern) is not inverted] # big brain inversion (== xor (== is not))
+                elif modifierType == "xtr":
+                    (groupNumber, pattern) = modifierArgument
+                    regex = re.compile(pattern, re.I)
+                    newList = []
+                    for i in applyArgument.List:
+                        newList.append(regex.findall(i))
+                    applyArgument.List = [x for l in newList for x in l]
 
         # endregion
 
