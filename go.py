@@ -1,4 +1,4 @@
-# VERSION 109    REV 21.11.01.01
+# VERSION 110    REV 21.11.02.01
 
 import ctypes
 import difflib
@@ -928,8 +928,8 @@ class GoConfig:
                         modifiers.append(("e", None))
                     elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
                         modifiers.append((m.group(1), m.group(2)))
-                    elif m := re.match("fl(?::(.+))?", modifierText, re.I):
-                        separator = m.group(1) or None
+                    elif m := re.match("fl(:(.+)?)?", modifierText, re.I):
+                        separator = (m.group(2) or "") if m.group(1) else None
                         modifiers.append(("fl", separator))
                     elif m := re.match("g:(.+)", modifierText, re.I):
                         modifiers.append(("g", m.group(1)))
