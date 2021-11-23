@@ -1,4 +1,4 @@
-# VERSION 110    REV 21.11.02.01
+# VERSION 111    REV 21.11.23.01
 
 import ctypes
 import difflib
@@ -136,6 +136,7 @@ def PrintHelp():
     print("                             the sub-go will receive its arguments with via stdin, so /papply should be used")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
     print("                    py:path[,arg] uses the specified py script to modify an apply list; see go /modulehelp")
+    print("                    rep:x:y  replaces the string x in the input with the string y")
     print("                    rm:rgx   filters out arguments that don't match (anywhere) the specified regex")
     print("                    rs:rgx   returns group 1 (else the first match) using the specified regex, for every argument")
     print("                             appending a number after rs will select that group instead of the first one (eg. rs3:...)")
@@ -939,6 +940,10 @@ class GoConfig:
                         modulePath = m.group(1)
                         moduleArgument = m.group(2)
                         modifiers.append(("py", (modulePath, moduleArgument)))
+                    elif m := re.match("rep:([^:]+):?(.+)?", modifierText, re.I):
+                        x = m.group(1)
+                        y = m.group(2) or ""
+                        modifiers.append(("rep", (x, y)))
                     elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
                         modifierType = m.group(1)
                         groupNumber = 1
@@ -1092,6 +1097,10 @@ class GoConfig:
                 elif modifierType == "py":
                     (modulePath, moduleArgument) = modifierArgument
                     applyArgument.List = self._getOrInitExternalModule(modulePath).ModifyApplyList(applyArgument, applyArgument.List, moduleArgument)
+                elif modifierType == "rep":
+                    (x, y) = modifierArgument
+                    print(f"{modifierArgument=}")
+                    applyArgument.List = [t.replace(x, y) for t in applyArgument.List]
                 elif modifierType == "rm":
                     regex = re.compile(modifierArgument, re.I)
                     applyArgument.List = [x for x in applyArgument.List if regex.search(x)]
