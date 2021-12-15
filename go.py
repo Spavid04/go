@@ -1,5 +1,6 @@
-# VERSION 111    REV 21.11.23.01
+# VERSION 112    REV 21.12.15.01
 
+# import colorama # lazily imported
 import ctypes
 import difflib
 import fnmatch
@@ -209,6 +210,28 @@ def PrintModulehelp():
 
 
 class Utils(object):
+    COLORAMA_INITED = False
+    COLORAMA_AVAILABLE = False
+    @staticmethod
+    def ClearScreen():
+        if not Utils.COLORAMA_INITED:
+            if "colorama" not in sys.modules:
+                try:
+                    import colorama
+                    colorama.init()
+                    Utils.COLORAMA_AVAILABLE = True
+                except ModuleNotFoundError:
+                    Cprint(">>>colorama module not found; clearing screen the classic way", level=1)
+            Utils.COLORAMA_INITED = True
+
+        if Utils.COLORAMA_AVAILABLE:
+            print(colorama.ansi.clear_screen())
+        else:
+            if sys.platform == "win32":
+                os.system("cls")
+            else:
+                os.system("clear")
+
     @staticmethod
     def GetScriptDir() -> str:
         scriptPath = __file__
@@ -1349,10 +1372,7 @@ class ParallelRunner:
                 if self._PrintArray[i] is not None:
                     tempArray.append((i, self._PrintArray[i]))
 
-            if sys.platform == "win32":
-                os.system("cls")
-            else:
-                os.system("clear")
+            Utils.ClearScreen()
             for (i, output) in tempArray:
                 print("[{0:3d}]  {1}".format(i + 1, Utils.RemoveControlCharacters(output)))
 
