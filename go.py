@@ -1,4 +1,4 @@
-# VERSION 112    REV 21.12.15.01
+# VERSION 112    REV 21.12.20.01
 
 # import colorama # lazily imported
 import ctypes
@@ -108,6 +108,7 @@ def PrintHelp():
     print("                Overrides the target to be run with the default shell interpreter, and allows for any target.")
     print("/unsafe       : Run the command as a simple string, and don't escape anything if possible.")
     print()
+    print("/noinline     : Disable replacement of inline markers.")
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
     print("                + (default) and - control whether to repeat source lists that are smaller, or to pass empty.")
@@ -222,6 +223,8 @@ class Utils(object):
                     Utils.COLORAMA_AVAILABLE = True
                 except ModuleNotFoundError:
                     Cprint(">>>colorama module not found; clearing screen the classic way", level=1)
+            else:
+                Utils.COLORAMA_AVAILABLE = True
             Utils.COLORAMA_INITED = True
 
         if Utils.COLORAMA_AVAILABLE:
@@ -739,6 +742,7 @@ class GoConfig:
         self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
         self.Rollover = False
         self.RolloverZero = False
+        self.NoInline = False
         self.RepeatCount = None
         self.CrossJoin = False
 
@@ -1009,6 +1013,8 @@ class GoConfig:
             self.Rollover = True
             if "-" in lower:
                 self.RolloverZero = True
+        elif lower == "/noinline":
+            self.NoInline = True
         elif lower.startswith("/repeat-"):
             self.RepeatCount = int(lower[8:])
         elif lower == "/crossjoin":
@@ -1211,9 +1217,12 @@ class GoConfig:
         self._ApplyListsUsed = [False] * len(self.ApplyLists)
         self._CurrentApplyListIndex = 0
 
-        for targetArgument in targetArguments:
-            newArgument = self._ProcessInlineMarker(targetArgument)
-            newArguments.append(newArgument)
+        if self.NoInline:
+            newArguments.extend(targetArguments)
+        else:
+            for targetArgument in targetArguments:
+                newArgument = self._ProcessInlineMarker(targetArgument)
+                newArguments.append(newArgument)
 
         for i in range(len(self.ApplyLists)):
             applyArgument = self.ApplyLists[i]
