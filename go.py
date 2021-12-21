@@ -1,4 +1,4 @@
-# VERSION 112    REV 21.12.20.01
+# VERSION 112    REV 21.12.21.01
 
 # import colorama # lazily imported
 import ctypes
@@ -214,20 +214,24 @@ class Utils(object):
     COLORAMA_INITED = False
     COLORAMA_AVAILABLE = False
     @staticmethod
-    def ClearScreen():
-        if not Utils.COLORAMA_INITED:
-            if "colorama" not in sys.modules:
-                try:
-                    import colorama
-                    colorama.init()
-                    Utils.COLORAMA_AVAILABLE = True
-                except ModuleNotFoundError:
-                    Cprint(">>>colorama module not found; clearing screen the classic way", level=1)
-            else:
-                Utils.COLORAMA_AVAILABLE = True
-            Utils.COLORAMA_INITED = True
+    def TryInitColorama() -> bool:
+        if Utils.COLORAMA_INITED:
+            return Utils.COLORAMA_AVAILABLE
 
+        try:
+            import colorama
+            colorama.init()
+            Utils.COLORAMA_AVAILABLE = True
+        except ModuleNotFoundError:
+            Cprint(">>>colorama module not found; clearing screen the classic way", level=1)
+        Utils.COLORAMA_INITED = True
+
+        return Utils.COLORAMA_AVAILABLE
+
+    @staticmethod
+    def ClearScreen():
         if Utils.COLORAMA_AVAILABLE:
+            import colorama
             print(colorama.ansi.clear_screen())
         else:
             if sys.platform == "win32":
@@ -1128,7 +1132,6 @@ class GoConfig:
                     applyArgument.List = self._getOrInitExternalModule(modulePath).ModifyApplyList(applyArgument, applyArgument.List, moduleArgument)
                 elif modifierType == "rep":
                     (x, y) = modifierArgument
-                    print(f"{modifierArgument=}")
                     applyArgument.List = [t.replace(x, y) for t in applyArgument.List]
                 elif modifierType == "rm":
                     regex = re.compile(modifierArgument, re.I)
@@ -1303,6 +1306,8 @@ class ParallelRunner:
         self._MainRunnerThread = threading.Thread(target=self._Runner)
         self._PrinterThread = threading.Thread(target=self._Printer)
         self._PrinterThreadStopEvent = False
+
+        Utils.TryInitColorama()
 
     def EnqueueRun(self, subprocessArgs: dict):
         self._SubprocessArgs.append(subprocessArgs)
