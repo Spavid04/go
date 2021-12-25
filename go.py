@@ -1,4 +1,4 @@
-# VERSION 112    REV 21.12.21.01
+# VERSION 114    REV 22.01.17.01
 
 # import colorama # lazily imported
 import ctypes
@@ -203,14 +203,22 @@ def PrintModulehelp():
         return
 
     print("Go can be extended with external python modules (scripts), allowing for dynamic creation or modification of apply arguments.")
-    print("A go module can contain any code, and can implement any of the 4 top-level functions, seen below:")
-    print("    Init(config):  initialises the module, with the specified GoConfig; called only once at startup")
+    print("A go module can contain any code, and can implement any number of the 4 top-level functions, seen below:")
+    print("    Init(config):  initializes the module, with the specified GoConfig; called only once at startup")
     print("    Exit():  clean up the module, if necessary; called only once at end of go")
     print("    GetApplyList(context, argument):  return a list of strings to be used as an apply source (context); accepts a string argument")
     print("    ModifyApplyList(context, applyList, argument):  modify the source (context) list of strings (applyList) and return a list of strings; accepts a string argument")
+    print("Go modules can be placed in the \"go_modules\" directory created next to go.py, and they will be seen automatically.")
 
 
 class Utils(object):
+    _isWindows = None
+    @staticmethod
+    def IsWindows() -> bool:
+        if Utils._isWindows is None:
+            Utils._isWindows = (sys.platform == "win32")
+        return Utils._isWindows
+
     COLORAMA_INITED = False
     COLORAMA_AVAILABLE = False
     @staticmethod
@@ -234,7 +242,7 @@ class Utils(object):
             import colorama
             print(colorama.ansi.clear_screen())
         else:
-            if sys.platform == "win32":
+            if Utils.IsWindows():
                 os.system("cls")
             else:
                 os.system("clear")
@@ -252,7 +260,7 @@ class Utils(object):
 
     @staticmethod
     def IsHidden(path: str) -> bool:
-        if sys.platform == "win32":
+        if Utils.IsWindows():
             s = os.stat(path)
             return bool(s.st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN)
         else:
@@ -347,12 +355,12 @@ class Utils(object):
     @staticmethod
     def ComparePathAndPattern(file: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) \
             -> float:
-        if sys.platform == "win32":
+        if Utils.IsWindows():
             file = file.lower()
         (filename, _) = os.path.splitext(file)
 
         if not fuzzy:
-            if sys.platform == "win32":
+            if Utils.IsWindows():
                 pattern = pattern.lower()
 
             return int(filename == pattern or file == pattern)
@@ -365,12 +373,12 @@ class Utils(object):
             else:
                 return 0
         elif asWildcard:
-            if sys.platform == "win32":
+            if Utils.IsWindows():
                 pattern = pattern.lower()
 
             return int(fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(file, pattern))
         else:
-            if sys.platform == "win32":
+            if Utils.IsWindows():
                 pattern = pattern.lower()
 
             return max(difflib.SequenceMatcher(None, filename, pattern).ratio(),
@@ -515,14 +523,25 @@ class Utils(object):
     def EnsureAdmin():
         hasAdmin = False
 
-        try:
-            hasAdmin = ctypes.windll.shell32.IsUserAnAdmin()
-        except:
-            hasAdmin = False
+        if Utils.IsWindows():
+            try:
+                hasAdmin = ctypes.windll.shell32.IsUserAnAdmin()
+            except:
+                pass
+        else:
+            hasAdmin = (os.geteuid() == 0)
 
-        if not hasAdmin:
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-            exit()
+        if hasAdmin:
+            return
+
+        executable = shlex.quote(sys.executable)
+        args = [shlex.quote(x) for x in sys.argv]
+
+        if Utils.IsWindows():
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, " ".join(args), None, 1)
+        else:
+            subprocess.Popen(["sudo", executable, *args])
+        exit()
 
     @staticmethod
     def Batch(list: typing.List[object], batchSize: int) -> typing.Generator[typing.List[object], None, None]:
@@ -532,7 +551,7 @@ class Utils(object):
 
     @staticmethod
     def CreateScriptFile(list: typing.List[typing.List[str]], echoOff: bool) -> str:
-        if sys.platform == "win32":
+        if Utils.IsWindows():
             echo = "@echo off"
             suffix = ".bat"
             selfDelete = "(goto) 2>nul & del \"%~f0\""
@@ -560,7 +579,7 @@ class Utils(object):
 
     @staticmethod
     def EscapeForShell(text: str) -> str:
-        if sys.platform == "win32":
+        if Utils.IsWindows():
             if not text or re.search(r"([\"\s])", text):
                 text = "\"" + text.replace("\"", r"\"") + "\""
 
@@ -611,7 +630,7 @@ class Utils(object):
 
     @staticmethod
     def GetDefaultExecutableExtensions() -> typing.List[str]:
-        if sys.platform == "win32":
+        if Utils.IsWindows():
             extensions = {".exe", ".com", ".bat", ".cmd", ".ps1", ".py"}
             extensions.update(x.lower() for x in os.environ["PATH"].split(os.pathsep))
             extensions = list(extensions)
@@ -712,7 +731,7 @@ class GoConfig:
         self.TargetedExtensions = Utils.GetDefaultExecutableExtensions()
         self.TargetedDirectories = []
         self.IgnoredDirectories = []
-        self.IncludeAnyExecutables = False if sys.platform == "win32" else True
+        self.IncludeAnyExecutables = not Utils.IsWindows()
         self.IncludeHidden = False
 
         self.CacheInvalidationTime = 1
@@ -1539,7 +1558,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
             exit(-1)
 
     if config.AsShellScript:
-        if sys.platform == "win32":
+        if Utils.IsWindows():
             target = GetDesiredMatchOrExit(config, "cmd.exe")
         else:
             target = GetDesiredMatchOrExit(config, "bash")
