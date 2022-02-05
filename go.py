@@ -1,4 +1,4 @@
-# VERSION 115    REV 22.02.05.01
+# VERSION 116    REV 22.02.05.02
 
 # import colorama # lazily imported
 import ctypes
@@ -87,6 +87,7 @@ def PrintHelp():
     print("                Also see config option \"AlwaysCache\".")
     print("/refresh      : Manually refresh the path cache.")
     print("/nofuzzy      : Disable fuzzy matching, speeding up target search.")
+    print("/duplinks     : Include symlinks to executables that were already found.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
     print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is 3 q's.")
@@ -210,6 +211,13 @@ def PrintModulehelp():
     print("    GetApplyList(context, argument):  return a list of strings to be used as an apply source (context); accepts a string argument")
     print("    ModifyApplyList(context, applyList, argument):  modify the source (context) list of strings (applyList) and return a list of strings; accepts a string argument")
     print("Go modules can be placed in the \"go_modules\" directory created next to go.py, and they will be seen automatically.")
+
+
+class MatchCacheItem():
+    def __init__(self, path: str, filename: str):
+        self.path = path
+        self.filename = filename
+        self.linkTarget : typing.Optional[str] = None
 
 
 class Utils():
@@ -764,6 +772,7 @@ class GoConfig:
         self.UsePathCache = False
         self.RefreshPathCache = False
         self.FuzzyMatch = True
+        self.IgnoreDuplicateLinks = True
 
         self.RegexTargetMatch = False
         self.WildcardTargetMatch = False
@@ -949,6 +958,9 @@ class GoConfig:
             self.RefreshPathCache = True
         elif lower == "/nofuzzy":
             self.FuzzyMatch = False
+        elif lower == "/duplinks":
+            self.IgnoreDuplicateLinks = False
+            self.UsePathCache = False
 
         elif lower == "/regex":
             self.RegexTargetMatch = True
@@ -1462,28 +1474,39 @@ class ParallelRunner:
             time.sleep(0.25)
 
 
-def unique(lst: typing.List[typing.Tuple[str, str]]) -> typing.List[typing.Tuple[str, str]]:
+def unique(lst: typing.List[MatchCacheItem], ignoreSymlinkDuplication: bool = True) -> typing.List[MatchCacheItem]:
     temp = {}
+    symlinks = []
 
     for i in range(len(lst)):
         item = lst[i]
 
-        key = (os.path.normcase(item[0]), os.path.normcase(item[1]))
+        if ignoreSymlinkDuplication and item.linkTarget is not None:
+            symlinks.append((i, item))
+            continue
+
+        key = (os.path.normcase(os.path.normpath(item.path)), os.path.normcase(item.filename))
         if key in temp:
             continue
 
         temp[key] = (i, item)
 
+    for (i, item) in symlinks:
+        key = (os.path.normcase(os.path.normpath(item.linkTarget)), os.path.normcase(item.filename))
+        if key in temp:
+            continue
+        temp[key] = (i, item)
+
     asList = list(temp.values())
     asList.sort(key=lambda x: x[0])
-    return [x[1] for x in asList]
+    return [item for (i, item) in asList]
 
 
 def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[typing.List[str], typing.List[str]]:
     if os.path.abspath(target).lower() == target.lower():
         return ([target], [])
 
-    allFiles = []
+    allFiles: typing.List[MatchCacheItem] = []
 
     scriptDir = Utils.GetScriptDir()
     cachePath = os.path.join(scriptDir, "go.cache")
@@ -1503,25 +1526,28 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             overwriteCache = True
 
     if len(allFiles) == 0:
-        allFiles.extend(Utils.ParsePathsForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions,
-                                                 False, config.IncludeAnyExecutables, config.IncludeHidden))
-        allFiles.extend(Utils.ParsePathsForFiles([os.getcwd()], config.TargetedExtensions,
-                                                 False, config.IncludeAnyExecutables, config.IncludeHidden))
-        allFiles.extend(Utils.ParsePathsForFiles(config.TargetedPaths, config.TargetedExtensions,
-                                                 True, config.IncludeAnyExecutables, config.IncludeHidden,
-                                                 config.IgnoredPaths))
-        allFiles = unique(allFiles)
+        for (path, filename) in itertools.chain(
+                Utils.ParsePathsForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions, False, config.IncludeAnyExecutables, config.IncludeHidden),
+                Utils.ParsePathsForFiles([os.getcwd()], config.TargetedExtensions, False, config.IncludeAnyExecutables, config.IncludeHidden),
+                Utils.ParsePathsForFiles(config.TargetedPaths, config.TargetedExtensions, True, config.IncludeAnyExecutables, config.IncludeHidden, config.IgnoredPaths)
+        ):
+            item = MatchCacheItem(path, filename)
+            if os.path.islink(path):
+                item.linkTarget = os.path.realpath(path)
+            allFiles.append(item)
+
+        allFiles = unique(allFiles, config.IgnoreDuplicateLinks)
 
     if overwriteCache:
         with open(cachePath, "wb") as f:
             pickle.dump((time.time(), allFiles), f)
 
     similarities = []
-    for (path, file) in allFiles:
+    for item in allFiles:
         passedThrough = True
 
         for (include, directoryFilter) in config.DirectoryFilter:
-            (directory, _) = os.path.split(path)
+            (directory, _) = os.path.split(item.path)
             directory = directory.lower()
 
             if (include and directoryFilter.lower() not in directory) or \
@@ -1532,8 +1558,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
         if not passedThrough:
             continue
 
-        similarities.append((path, Utils.ComparePathAndPattern(file, target, config.FuzzyMatch,
-                                                               config.RegexTargetMatch, config.WildcardTargetMatch)))
+        similarities.append((item.path, Utils.ComparePathAndPattern(item.filename, target, config.FuzzyMatch,
+                                                                    config.RegexTargetMatch, config.WildcardTargetMatch)))
 
     exactMatches = [x[0] for x in similarities if x[1] == 1.0]
 
