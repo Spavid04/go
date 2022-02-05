@@ -1,4 +1,4 @@
-# VERSION 114    REV 22.01.17.01
+# VERSION 115    REV 22.02.05.01
 
 # import colorama # lazily imported
 import ctypes
@@ -10,6 +10,7 @@ import json
 import os
 import pickle
 # import psutil # lazily imported
+import queue
 import re
 import subprocess
 import tempfile
@@ -47,13 +48,13 @@ def PrintHelp():
     print()
     print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
     print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
-    print("Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedDirectories\" and \"IgnoredDirectories\".")
+    print("Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedPaths\" and \"IgnoredPaths\".")
     print("Config files are json files.")
-    print("Added directories are searched recursively.")
-    print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedDirectories\":[],\"IgnoredDirectories\":[]}\"")
-    print("Optional config keys:")
+    print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedPaths\":[],\"IgnoredPaths\":[]}\"")
+    print("Added paths are searched/ignored recursively if they specify a directory.")
+    print("Other (optional) config keys:")
     print("  AlwaysYes [bool]: always set /yes.")
-    print("  AlwaysQuiet [bool]: always set /quiet")
+    print("  AlwaysQuiet [0-3 or bool]: if bool set /quiet, if int set the level of /quiet")
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
     print("  AlwaysCache [bool]: always use the path cache by default")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
@@ -68,8 +69,8 @@ def PrintHelp():
     print("/config-XXXX  : Uses the specified config file.")
     print()
     print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
-    print("/dir[+-]XXXX  : Adds or removes the directory to the searched directories list (recursive).")
-    print("/ign[+-]XXXX  : Adds or removes the directory to the ignored directories list (recursive).")
+    print("/inc[+-]XXXX  : Adds or removes the path to the searched paths list (recursive if a directory).")
+    print("/exc[+-]XXXX  : Adds or removes the path to the ignored paths list (recursive if a directory).")
     print("/executables  : Toggle inclusion of files that are marked as executables, regardless of extension.")
     print("                By default, Windows excludes them, and UNIX includes them.")
     print("/hidden[+-]   : Includes or excludes hidden files and directories. Omitting + or - toggles the setting.")
@@ -211,7 +212,7 @@ def PrintModulehelp():
     print("Go modules can be placed in the \"go_modules\" directory created next to go.py, and they will be seen automatically.")
 
 
-class Utils(object):
+class Utils():
     _isWindows = None
     @staticmethod
     def IsWindows() -> bool:
@@ -268,85 +269,110 @@ class Utils(object):
             return filename[0] == "."
 
     @staticmethod
-    def ParseDirectoriesForFiles(directories: typing.List[str], extensions: typing.List[str],
-                                 recursive: bool, includeModX: bool, includeHidden: bool,
-                                 ignoredDirectories: typing.Optional[typing.List[str]] = None) -> \
+    def ParsePathsForFiles(targetedPaths: typing.List[str], extensions: typing.List[str],
+                           recursive: bool, includeModX: bool, includeHidden: bool,
+                           ignoredPaths: typing.Optional[typing.List[str]] = None) -> \
             typing.List[typing.Tuple[str, str]]:
         matches = []
         matchingPaths = set()
 
-        directoriesQueue = list(directories)
-        while directoriesQueue:
-            targetedDirectory = directoriesQueue.pop(0)
+        ignoredFiles = [os.path.normcase(os.path.normpath(x)) for x in ignoredPaths if os.path.isfile(x)] if ignoredPaths else []
+        ignoredDirectories = [os.path.normcase(os.path.normpath(x)) for x in ignoredPaths if os.path.isdir(x)] if ignoredPaths else []
 
-            for (root, dirs, files) in os.walk(targetedDirectory, topdown=True):
-                if ".gofilter" in files:
-                    files.remove(".gofilter")
+        pathQueue = queue.SimpleQueue()
+        for i in targetedPaths:
+            pathQueue.put(i)
 
-                    with open(os.path.join(root, ".gofilter"), "r") as f:
-                        gofilterFilters = f.read().splitlines()
+        while not pathQueue.empty():
+            targetedPath = pathQueue.get()
 
-                    gofilterIgnores = []
-                    gofilterIncludes = []
-                    for filter in gofilterFilters:
-                        if filter[0] == "+":
-                            fullpath = os.path.join(root, os.path.normcase(filter[1:]))
-                            if os.path.isdir(fullpath):
-                                directoriesQueue.append(fullpath)
+            if os.path.isfile(targetedPath):
+                abspath = os.path.normcase(os.path.normpath(os.path.abspath(targetedPath)))
+                file = os.path.split(abspath)[1]
+                if abspath in matchingPaths:
+                    continue
+                matches.append((abspath, file))
+                matchingPaths.add(abspath)
+            else:
+                for (root, dirs, files) in os.walk(targetedPath, topdown=True):
+                    if ".gofilter" in files:
+                        files.remove(".gofilter")
+
+                        with open(os.path.join(root, ".gofilter"), "r") as f:
+                            gofilterFilters = f.read().splitlines()
+
+                        gofilterIgnores = []
+                        gofilterIncludes = []
+                        for filter in gofilterFilters:
+                            if filter[0] == "+":
+                                fullpath = os.path.join(root, os.path.normcase(filter[1:]))
+                                if os.path.isdir(fullpath):
+                                    pathQueue.put(fullpath)
+                                else:
+                                    gofilterIncludes.append(filter[1:])
+                            elif filter[0] == "-":
+                                gofilterIgnores.append(filter[1:])
                             else:
-                                gofilterIncludes.append(filter[1:])
-                        elif filter[0] == "-":
-                            gofilterIgnores.append(filter[1:])
-                        else:
-                            gofilterIgnores.append(filter)
+                                gofilterIgnores.append(filter)
 
-                    dirs_copy = list(dirs)
-                    for dir in dirs_copy:
-                        if any(fnmatch.fnmatch(dir, x) for x in gofilterIgnores) \
-                                and not any(fnmatch.fnmatch(dir, x) for x in gofilterIncludes):
-                            dirs.remove(dir)
-                    files_copy = list(files)
-                    for file in files_copy:
-                        if any(fnmatch.fnmatch(file, x) for x in gofilterIgnores) \
-                                and not any(fnmatch.fnmatch(file, x) for x in gofilterIncludes):
-                            files.remove(file)
+                        dirs_copy = list(dirs)
+                        for dir in dirs_copy:
+                            if any(fnmatch.fnmatch(dir, x) for x in gofilterIgnores) \
+                                    and not any(fnmatch.fnmatch(dir, x) for x in gofilterIncludes):
+                                dirs.remove(dir)
+                        files_copy = list(files)
+                        for file in files_copy:
+                            if any(fnmatch.fnmatch(file, x) for x in gofilterIgnores) \
+                                    and not any(fnmatch.fnmatch(file, x) for x in gofilterIncludes):
+                                files.remove(file)
 
-                if recursive and (ignoredDirectories or not includeHidden):
-                    dirs_copy = list(dirs)
-                    for dir in dirs_copy:
-                        abspath = os.path.abspath(os.path.join(root, dir))
-                        if not includeHidden and Utils.IsHidden(abspath):
-                            dirs.remove(dir)
-                            continue
-                        if any(os.path.samefile(abspath, x) for x in ignoredDirectories):
-                            dirs.remove(dir)
-                            continue
+                    if recursive and (ignoredDirectories or not includeHidden):
+                        dirs_copy = list(dirs)
+                        for dir in dirs_copy:
+                            abspath = os.path.abspath(os.path.join(root, dir))
+                            if not includeHidden and Utils.IsHidden(abspath):
+                                dirs.remove(dir)
+                                continue
 
-                for file in files:
-                    fullpath = os.path.join(root, file)
+                            ignored = False
+                            normalized = os.path.normcase(os.path.normpath(abspath))
+                            for ignoredDirectory in ignoredDirectories:
+                                if os.path.samefile(normalized, ignoredDirectory) \
+                                        or normalized.startswith(ignoredDirectory):
+                                    ignored = True
+                                    break
+                            if ignored:
+                                dirs.remove(dir)
+                                continue
 
-                    if not includeHidden:
-                        if Utils.IsHidden(fullpath):
-                            continue
+                    for file in files:
+                        fullpath = os.path.join(root, file)
 
-                    canAdd = False
-                    if includeModX:
-                        if os.path.isfile(fullpath) and os.access(fullpath, os.X_OK):
-                            canAdd = True
-                    if not canAdd:
-                        (_, extension) = os.path.splitext(file)
-                        extension = extension.lower()
-                        canAdd = extension in extensions
+                        if not includeHidden:
+                            if Utils.IsHidden(fullpath):
+                                continue
+                        if ignoredFiles:
+                            if any(os.path.samefile(fullpath, x) for x in ignoredFiles):
+                                continue
 
-                    if canAdd:
-                        abspath = os.path.abspath(fullpath)
-                        if abspath in matchingPaths:
-                            continue
-                        matchingPaths.add(abspath)
-                        matches.append((abspath, file))
+                        canAdd = False
+                        if includeModX:
+                            if os.path.isfile(fullpath) and os.access(fullpath, os.X_OK):
+                                canAdd = True
+                        if not canAdd:
+                            (_, extension) = os.path.splitext(file)
+                            extension = extension.lower()
+                            canAdd = extension in extensions
 
-                if not recursive:
-                    break
+                        if canAdd:
+                            abspath = os.path.abspath(fullpath)
+                            if abspath in matchingPaths:
+                                continue
+                            matchingPaths.add(abspath)
+                            matches.append((abspath, file))
+
+                    if not recursive:
+                        break
 
         return matches
 
@@ -729,9 +755,9 @@ class GoConfig:
         self.ConfigFile = "go.config"
 
         self.TargetedExtensions = Utils.GetDefaultExecutableExtensions()
-        self.TargetedDirectories = []
-        self.IgnoredDirectories = []
-        self.IncludeAnyExecutables = not Utils.IsWindows()
+        self.TargetedPaths = []
+        self.IgnoredPaths = []
+        self.IncludeAnyExecutables = (not Utils.IsWindows())
         self.IncludeHidden = False
 
         self.CacheInvalidationTime = 1
@@ -780,43 +806,64 @@ class GoConfig:
             scriptDir = Utils.GetScriptDir()
             path = os.path.join(scriptDir, path)
 
-        targetedExtensions = []
-        targetedDirectories = []
+        if not os.path.isfile(path):
+            Cprint(">>>config file missing", level=1)
+            return
 
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-
-                targetedExtensions = config["TargetedExtensions"]
-                targetedDirectories = config["TargetedDirectories"]
-                ignoredDirectories = config["IgnoredDirectories"]
         except:
-            Cprint(">>>config file invalid or missing", level=2)
+            Cprint(">>>config file contains invalid json", level=2)
             return
+
+        targetedExtensions = []
+        targetedPaths = []
+        ignoredPaths = []
+
+        if "TargetedExtensions" in config:
+            targetedExtensions = config.pop("TargetedExtensions")
+        if "TargetedPaths" in config:
+            targetedPaths = config.pop("TargetedPaths")
+        if "IgnoredPaths" in config:
+            ignoredPaths = config.pop("IgnoredPaths")
 
         if overwriteSettings:
             self.TargetedExtensions = targetedExtensions
-            self.TargetedDirectories = targetedDirectories
-            self.IgnoredDirectories = ignoredDirectories
+            self.TargetedPaths = targetedPaths
+            self.IgnoredPaths = ignoredPaths
         else:
             self.TargetedExtensions.extend(targetedExtensions)
-            self.TargetedDirectories.extend(targetedDirectories)
-            self.IgnoredDirectories.extend(ignoredDirectories)
+            self.TargetedPaths.extend(targetedPaths)
+            self.IgnoredPaths.extend(ignoredPaths)
 
-        if "AlwaysYes" in config and config["AlwaysYes"]:
+        if "AlwaysYes" in config and config.pop("AlwaysYes"):
             self.TryParseArgument("/yes")
-        if "AlwaysQuiet" in config and config["AlwaysQuiet"]:
-            self.TryParseArgument("/yes")
-        if "AlwaysFirst" in config and config["AlwaysFirst"]:
+        if "AlwaysQuiet" in config:
+            value = config.pop("AlwaysQuiet")
+            quietLevel = 0
+            if isinstance(value, bool):
+                if value:
+                    quietLevel = 1
+            else:
+                quietLevel = value
+
+            if quietLevel > 0:
+                self.TryParseArgument("/yes")
+                self.TryParseArgument("/" + "q" * quietLevel + "uiet")
+        if "AlwaysFirst" in config and config.pop("AlwaysFirst"):
             self.FirstMatchFromConfig = True
-        if "AlwaysCache" in config and config["AlwaysCache"]:
+        if "AlwaysCache" in config and config.pop("AlwaysCache"):
             self.UsePathCache = True
-        if "NoFuzzyMatch" in config and config["NoFuzzyMatch"]:
+        if "NoFuzzyMatch" in config and config.pop("NoFuzzyMatch"):
             self.FuzzyMatch = False
         if "IncludeHidden" in config:
-            self.IncludeHidden = bool(config["IncludeHidden"])
+            self.IncludeHidden = bool(config.pop("IncludeHidden"))
         if "CacheInvalidationTime" in config:
-            self.CacheInvalidationTime = float(config["CacheInvalidationTime"])
+            self.CacheInvalidationTime = float(config.pop("CacheInvalidationTime"))
+
+        if len(config.keys()) > 0:
+            Cprint(">>>config file contains extra keys: " + ", ".join(config.keys()), level=1)
 
     class ApplyElement:
         def __init__(self,
@@ -843,27 +890,27 @@ class GoConfig:
             path = argument[8:]
             self.ConfigFile = path
             self.ReloadConfig(True)
-        elif lower.startswith("/dir"):
+        elif lower.startswith("/inc"):
             action = lower[4]
             path = os.path.abspath(lower[5:])
 
             if action == "-":
-                if path in self.TargetedDirectories:
-                    self.TargetedDirectories.remove(path)
+                if path in self.TargetedPaths:
+                    self.TargetedPaths.remove(path)
             else:
-                if path not in self.TargetedDirectories:
-                    self.TargetedDirectories.append(path)
+                if path not in self.TargetedPaths:
+                    self.TargetedPaths.append(path)
             self.UsePathCache = False
-        elif lower.startswith("/ign"):
+        elif lower.startswith("/exc"):
             action = lower[4]
             path = os.path.abspath(lower[5:])
 
             if action == "-":
-                if path in self.IgnoredDirectories:
-                    self.IgnoredDirectories.remove(path)
+                if path in self.IgnoredPaths:
+                    self.IgnoredPaths.remove(path)
             else:
-                if path not in self.IgnoredDirectories:
-                    self.IgnoredDirectories.append(path)
+                if path not in self.IgnoredPaths:
+                    self.IgnoredPaths.append(path)
             self.UsePathCache = False
         elif lower.startswith("/ext"):
             action = lower[4]
@@ -1456,13 +1503,13 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
             overwriteCache = True
 
     if len(allFiles) == 0:
-        allFiles.extend(Utils.ParseDirectoriesForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions,
-                                                       False, config.IncludeAnyExecutables, config.IncludeHidden))
-        allFiles.extend(Utils.ParseDirectoriesForFiles([os.getcwd()], config.TargetedExtensions,
-                                                       False, config.IncludeAnyExecutables, config.IncludeHidden))
-        allFiles.extend(Utils.ParseDirectoriesForFiles(config.TargetedDirectories, config.TargetedExtensions,
-                                                       True, config.IncludeAnyExecutables, config.IncludeHidden,
-                                                       config.IgnoredDirectories))
+        allFiles.extend(Utils.ParsePathsForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions,
+                                                 False, config.IncludeAnyExecutables, config.IncludeHidden))
+        allFiles.extend(Utils.ParsePathsForFiles([os.getcwd()], config.TargetedExtensions,
+                                                 False, config.IncludeAnyExecutables, config.IncludeHidden))
+        allFiles.extend(Utils.ParsePathsForFiles(config.TargetedPaths, config.TargetedExtensions,
+                                                 True, config.IncludeAnyExecutables, config.IncludeHidden,
+                                                 config.IgnoredPaths))
         allFiles = unique(allFiles)
 
     if overwriteCache:
