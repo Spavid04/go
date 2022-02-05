@@ -1,4 +1,4 @@
-# VERSION 116    REV 22.02.05.02
+# VERSION 117    REV 22.02.05.03
 
 # import colorama # lazily imported
 import ctypes
@@ -60,6 +60,7 @@ def PrintHelp():
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
+    print("  DefaultArguments [list[str]]: prepend the given arguments before any command line arguments every go run")
     print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
     print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
     print("  whether to include or ignore matches.")
@@ -821,7 +822,7 @@ class GoConfig:
 
         try:
             with open(path, "r", encoding="utf-8") as f:
-                config = json.load(f)
+                config: dict = json.load(f)
         except:
             Cprint(">>>config file contains invalid json", level=2)
             return
@@ -870,6 +871,11 @@ class GoConfig:
             self.IncludeHidden = bool(config.pop("IncludeHidden"))
         if "CacheInvalidationTime" in config:
             self.CacheInvalidationTime = float(config.pop("CacheInvalidationTime"))
+        if "DefaultArguments" in config:
+            args = config.pop("DefaultArguments")
+            for arg in args:
+                if not self.TryParseArgument(arg):
+                    Cprint(">>>default argument \"%s\" is an invalid go argument; ignoring..." % (arg), level=2)
 
         if len(config.keys()) > 0:
             Cprint(">>>config file contains extra keys: " + ", ".join(config.keys()), level=1)
