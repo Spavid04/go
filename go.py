@@ -1,4 +1,4 @@
-# VERSION 118    REV 22.02.06.01
+# VERSION 119    REV 22.02.06.02
 
 # import colorama # lazily imported
 import ctypes
@@ -86,7 +86,6 @@ def PrintHelp():
     print("/cache[+-]    : Instruct go whether to use the path cache. By default, it is not used.")
     print("                Will be created if not already existing, or if more than one week old.")
     print("                Speeds up target lookup if you have a wide path.")
-    print("                Also see config option \"AlwaysCache\".")
     print("/refresh      : Manually refresh the path cache.")
     print("/nofuzzy      : Disable fuzzy matching, speeding up target search.")
     print("/duplinks     : Include symlinks to executables that were already found.")
@@ -104,6 +103,7 @@ def PrintHelp():
     print("/fork         : Does not wait for the started process to end.")
     print("/detach       : Detaches child processes, but can create unwanted windows. Usually used with /fork.")
     print("/waitfor-XX   : Delays execution until after the specified process (PID) has stopped running. Can be repeated.")
+    print("                Requires the \"psutil\" python module.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
@@ -159,9 +159,9 @@ def PrintHelp():
     print("                             returns group 1 (else the first match), or allows a group number like rs:rgx")
     print("                Inline (inside command arguments) markers:")
     print("                    Syntax: %%[index of apply source, negatives allowed]%%.")
-    print("                    You can replace % with $ if your shell treats either one differently.")
-    print("                    Specifies where to append the apply lists. Can use the same list more than one time.")
-    print("                    Replacement is also done in quoted or complex arguments.")
+    print("                    You can use $ instead of % if your shell treats either one differently.")
+    print("                    Inline markers specify where to append the apply lists, including in quoted or complex arguments.")
+    print("                    Apply lists can be used more than one time.")
     print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
 
 
@@ -1682,15 +1682,17 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
     else:
         directory = None
 
+    shouldEchoTarget = config.EchoTarget and can_print(1)
+    echoActualTarget = target if not config.AsShellScript else goTarget
+
     for run in range(runs):
         arguments = [y for x in targetArguments for y in x[run:run + 1]]
 
-        if config.EchoTarget and can_print(1):
+        if shouldEchoTarget:
             if config.Unsafe:
-                print((target if not config.AsShellScript else goTarget) + " " + " ".join(arguments))
+                print(echoActualTarget + " " + " ".join(arguments))
             else:
-                print(Utils.EscapeForShell(target if not config.AsShellScript else goTarget) + " " +
-                      " ".join(Utils.EscapeForShell(x) for x in arguments))
+                print(Utils.EscapeForShell(echoActualTarget) + " " + " ".join(Utils.EscapeForShell(x) for x in arguments))
         if config.DryRun:
             continue
         if config.AsShellScript:
