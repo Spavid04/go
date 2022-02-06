@@ -1,4 +1,4 @@
-# VERSION 117    REV 22.02.05.03
+# VERSION 118    REV 22.02.06.01
 
 # import colorama # lazily imported
 import ctypes
@@ -57,6 +57,7 @@ def PrintHelp():
     print("  AlwaysQuiet [0-3 or bool]: if bool set /quiet, if int set the level of /quiet")
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
     print("  AlwaysCache [bool]: always use the path cache by default")
+    print("  AlwaysShell [bool]: always run the target through the shell")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
@@ -106,9 +107,10 @@ def PrintHelp():
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
+    print("/shell        : Run the command through the default shell interpreter. Allows for any target.")
     print("/asscript     : Passes all commands to the default shell interpreter, as a file. Incompatible with most modifiers.")
-    print("                Appending a + after the argument will not disable shell echo. (/asscript+)")
     print("                Overrides the target to be run with the default shell interpreter, and allows for any target.")
+    print("                Appending a + after the argument will not disable shell echo. (/asscript+)")
     print("/unsafe       : Run the command as a simple string, and don't escape anything if possible.")
     print()
     print("/noinline     : Disable replacement of inline markers.")
@@ -794,6 +796,7 @@ class GoConfig:
         self.Parallel = False
         self.Batched = False
         self.ParallelLimit = None
+        self.Shell = False
         self.AsShellScript = False
         self.EchoOff = True
         self.Unsafe = False
@@ -865,6 +868,8 @@ class GoConfig:
             self.FirstMatchFromConfig = True
         if "AlwaysCache" in config and config.pop("AlwaysCache"):
             self.UsePathCache = True
+        if "AlwaysShell" in config and config.pop("AlwaysShell"):
+            self.TryParseArgument("/shell")
         if "NoFuzzyMatch" in config and config.pop("NoFuzzyMatch"):
             self.FuzzyMatch = False
         if "IncludeHidden" in config:
@@ -1021,10 +1026,13 @@ class GoConfig:
             self.Batched = True
         elif lower.startswith("/limit-"):
             self.ParallelLimit = int(lower[7:])
+        elif lower == "/shell":
+            self.Shell = True
         elif lower.startswith("/asscript"):
             self.AsShellScript = True
             if "+" in lower:
                 self.EchoOff = False
+            self.TryParseArgument("/shell")
         elif lower == "/unsafe":
             self.Unsafe = True
 
@@ -1123,6 +1131,10 @@ class GoConfig:
 
         if self.AsShellScript and self.Parallel:
             Cprint(">>>/asscript cannot be used with /parallel", level=1)
+
+        if (self.Shell or self.AsShellScript) and self.ChangeWorkingDirectory:
+            Cprint(">>>/shell or /asscript and /cd cannot be used together", level=2)
+            return False
 
         if self.CrossJoin and (self.RepeatCount or self.Rollover):
             Cprint(">>>/crossjoin cannot be used either /rollover or /repeat", level=2)
@@ -1641,6 +1653,8 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
             target = GetDesiredMatchOrExit(config, "cmd.exe")
         else:
             target = GetDesiredMatchOrExit(config, "bash")
+    elif config.Shell:
+        target = goTarget
     else:
         target = GetDesiredMatchOrExit(config, goTarget)
     parallelRunner = ParallelRunner(config) if config.Parallel else None
@@ -1688,7 +1702,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         else:
             runArgument = [target] + arguments
 
-        subprocessArgs = {"args": runArgument, "shell": True, "cwd": directory, "creationflags": flags,
+        subprocessArgs = {"args": runArgument, "shell": config.Shell, "cwd": directory, "creationflags": flags,
                           "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
 
         if config.Parallel:
