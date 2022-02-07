@@ -1,4 +1,4 @@
-# VERSION 123    REV 22.02.07.04
+# VERSION 124    REV 22.02.07.05
 
 import ctypes
 import difflib
@@ -685,7 +685,7 @@ class Utils():
     def CaptureGoOutput(command: str, stdinLines: typing.List[str] = None) -> typing.List[str]:
         lines = []
 
-        process = subprocess.Popen("go /qqquiet " + command, shell=config.Shell,
+        process = subprocess.Popen("go /qqquiet " + command, shell=True,
                                    stdout=subprocess.PIPE, stderr=sys.stderr, stdin=subprocess.PIPE if stdinLines else sys.stdin)
 
         if stdinLines:
