@@ -1,4 +1,4 @@
-# VERSION 120    REV 22.02.07.01
+# VERSION 121    REV 22.02.07.02
 
 # import colorama # lazily imported
 import ctypes
@@ -37,10 +37,22 @@ def Cprint_gen(level: int) -> typing.Callable:
     return lambda *args, **kwargs: Cprint(*args, level=level, **kwargs)
 
 
+VERSION_REGEX = re.compile(r"^.*?(\d+).+(\d\d\.\d\d\.\d\d\.\d\d).*$")
+CURRENT_VERSION = None
+def get_current_version() -> (str, str):
+    global CURRENT_VERSION
+    if CURRENT_VERSION is None:
+        with open(__file__, "r", encoding="utf-8") as f:
+            line = f.readline().strip()
+        m = VERSION_REGEX.match(line)
+        CURRENT_VERSION = (m.group(1), m.group(2))
+    return CURRENT_VERSION
+
 def PrintHelp():
     if not can_print(2):
         return
-    
+
+    print("Revision %s    Version %s" % get_current_version())
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
     print("Run with /examples to print some usage examples.")
@@ -253,64 +265,65 @@ class ApplyListSpecifier():
         modifiers = []
         applyArgument = None
 
-        for match in ApplyListSpecifier.__ApplyArgumentRegex.finditer(argsstr):
-            if match.group(1):
-                modifierText = match.group(1)
-                if modifierText == "e":
-                    modifiers.append(("e", None))
-                elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
-                    modifiers.append((m.group(1), m.group(2)))
-                elif m := re.match("fl(:(.+)?)?", modifierText, re.I):
-                    separator = (m.group(2) or "") if m.group(1) else None
-                    modifiers.append(("fl", separator))
-                elif m := re.match("g:(.+)", modifierText, re.I):
-                    modifiers.append(("g", m.group(1)))
-                elif m := re.match("i:(\\d+)", modifierText, re.I):
-                    modifiers.append(("i", int(m.group(1))))
-                elif m := re.match("py:([^,]+)(?:,(.+))?", modifierText, re.I):
-                    modulePath = m.group(1)
-                    moduleArgument = m.group(2)
-                    modifiers.append(("py", (modulePath, moduleArgument)))
-                elif m := re.match("rep:([^:]+):?(.+)?", modifierText, re.I):
-                    x = m.group(1)
-                    y = m.group(2) or ""
-                    modifiers.append(("rep", (x, y)))
-                elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
-                    modifierType = m.group(1)
-                    groupNumber = 1
-                    modifierValue = m.group(3)
-                    if m.group(2):
-                        groupNumber = int(m.group(2))
+        if argsstr is not None:
+            for match in ApplyListSpecifier.__ApplyArgumentRegex.finditer(argsstr):
+                if match.group(1):
+                    modifierText = match.group(1)
+                    if modifierText == "e":
+                        modifiers.append(("e", None))
+                    elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
+                        modifiers.append((m.group(1), m.group(2)))
+                    elif m := re.match("fl(:(.+)?)?", modifierText, re.I):
+                        separator = (m.group(2) or "") if m.group(1) else None
+                        modifiers.append(("fl", separator))
+                    elif m := re.match("g:(.+)", modifierText, re.I):
+                        modifiers.append(("g", m.group(1)))
+                    elif m := re.match("i:(\\d+)", modifierText, re.I):
+                        modifiers.append(("i", int(m.group(1))))
+                    elif m := re.match("py:([^,]+)(?:,(.+))?", modifierText, re.I):
+                        modulePath = m.group(1)
+                        moduleArgument = m.group(2)
+                        modifiers.append(("py", (modulePath, moduleArgument)))
+                    elif m := re.match("rep:([^:]+):?(.+)?", modifierText, re.I):
+                        x = m.group(1)
+                        y = m.group(2) or ""
+                        modifiers.append(("rep", (x, y)))
+                    elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
+                        modifierType = m.group(1)
+                        groupNumber = 1
+                        modifierValue = m.group(3)
+                        if m.group(2):
+                            groupNumber = int(m.group(2))
 
-                    if modifierType == "rm":
-                        modifiers.append((modifierType, modifierValue))
-                    elif modifierType == "rs":
-                        modifiers.append((modifierType, (groupNumber, modifierValue)))
-                    elif modifierType == "rms":
-                        modifiers.append(("rm", modifierValue))
-                        modifiers.append(("rs", (groupNumber, modifierValue)))
-                elif m := re.match("s(-?):([\\d:,-]+)", modifierText, re.I):
-                    excludeInstead = bool(m.group(1))
-                    expression = m.group(2)
-                    modifiers.append(("s", (excludeInstead, expression)))
-                elif m := re.match("sp:(.+)", modifierText, re.I):
-                    modifiers.append(("sp", m.group(1)))
-                elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
-                    modifiers.append(("ss", m.group(1)))
-                elif m := re.match("w(-)?:(.+)", modifierText, re.I):
-                    inverted = bool(m.group(1))
-                    pattern = m.group(2)
-                    modifiers.append(("w", (inverted, pattern)))
-                elif m := re.match("xtr(\\d+)?:(.+)", modifierText, re.I):
-                    groupNumber = 1
-                    pattern = m.group(2)
-                    if m.group(1):
-                        groupNumber = int(m.group(1))
+                        if modifierType == "rm":
+                            modifiers.append((modifierType, modifierValue))
+                        elif modifierType == "rs":
+                            modifiers.append((modifierType, (groupNumber, modifierValue)))
+                        elif modifierType == "rms":
+                            modifiers.append(("rm", modifierValue))
+                            modifiers.append(("rs", (groupNumber, modifierValue)))
+                    elif m := re.match("s(-?):([\\d:,-]+)", modifierText, re.I):
+                        excludeInstead = bool(m.group(1))
+                        expression = m.group(2)
+                        modifiers.append(("s", (excludeInstead, expression)))
+                    elif m := re.match("sp:(.+)", modifierText, re.I):
+                        modifiers.append(("sp", m.group(1)))
+                    elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
+                        modifiers.append(("ss", m.group(1)))
+                    elif m := re.match("w(-)?:(.+)", modifierText, re.I):
+                        inverted = bool(m.group(1))
+                        pattern = m.group(2)
+                        modifiers.append(("w", (inverted, pattern)))
+                    elif m := re.match("xtr(\\d+)?:(.+)", modifierText, re.I):
+                        groupNumber = 1
+                        pattern = m.group(2)
+                        if m.group(1):
+                            groupNumber = int(m.group(1))
 
-                    modifiers.append(("xtr", (groupNumber, pattern)))
+                        modifiers.append(("xtr", (groupNumber, pattern)))
 
-            elif match.group(2):
-                applyArgument = match.group(2)
+                elif match.group(2):
+                    applyArgument = match.group(2)
 
         return ApplyListSpecifier(type, modifiers, applyArgument)
 
