@@ -1,4 +1,4 @@
-# VERSION 121    REV 22.02.07.02
+# VERSION 122    REV 22.02.07.03
 
 # import colorama # lazily imported
 import ctypes
@@ -79,6 +79,7 @@ def PrintHelp():
     print("  whether to include or ignore matches.")
     print()
     print("Avaliable go arguments:")
+    print("All arguments accept a -- prefix instead of /")
     print()
     print("/config-XXXX  : Uses the specified config file.")
     print()
@@ -933,7 +934,7 @@ class Utils():
 
 
 class GoConfig:
-    _QuietRegex = re.compile("^/(q+)uiet$", re.I)
+    _QuietRegex = re.compile("^(q+)uiet$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -946,6 +947,7 @@ class GoConfig:
 
         self.CacheInvalidationTime = 1
         self.UsePathCache = False
+        self.DisablePathCache = False
         self.RefreshPathCache = False
         self.FuzzyMatch = True
         self.IgnoreDuplicateLinks = True
@@ -1040,13 +1042,14 @@ class GoConfig:
         if "AlwaysFirst" in config and config.pop("AlwaysFirst"):
             self.FirstMatchFromConfig = True
         if "AlwaysCache" in config and config.pop("AlwaysCache"):
-            self.UsePathCache = True
+            self.TryParseArgument("/cache+")
         if "AlwaysShell" in config and config.pop("AlwaysShell"):
             self.TryParseArgument("/shell")
         if "NoFuzzyMatch" in config and config.pop("NoFuzzyMatch"):
-            self.FuzzyMatch = False
+            self.TryParseArgument("/nofuzzy")
         if "IncludeHidden" in config:
-            self.IncludeHidden = bool(config.pop("IncludeHidden"))
+            value = bool(config.pop("IncludeHidden"))
+            self.TryParseArgument("/hidden" + ("+" if value else "-"))
         if "CacheInvalidationTime" in config:
             self.CacheInvalidationTime = float(config.pop("CacheInvalidationTime"))
         if "DefaultArguments" in config:
@@ -1059,22 +1062,28 @@ class GoConfig:
             Cprint(">>>config file contains extra keys: " + ", ".join(config.keys()), level=1)
 
     def TryParseArgument(self, argument: str) -> bool:
+        if argument.startswith("/"):
+            argument = argument[1:]
+        elif argument.startswith("--"):
+            argument = argument[2:]
+        else:
+            return False
         lower = argument.lower()
 
-        if lower == "/examples":
+        if lower == "examples":
             PrintExamples()
             exit(0)
-        elif lower == "/modulehelp":
+        elif lower == "modulehelp":
             PrintModulehelp()
             exit(0)
 
-        elif lower.startswith("/config-"):
-            path = argument[8:]
+        elif lower.startswith("config-"):
+            path = argument[7:]
             self.ConfigFile = path
             self.ReloadConfig(True)
-        elif lower.startswith("/inc"):
-            action = lower[4]
-            path = os.path.abspath(lower[5:])
+        elif lower.startswith("inc"):
+            action = lower[3]
+            path = os.path.abspath(lower[4:])
 
             if action == "-":
                 if path in self.TargetedPaths:
@@ -1082,10 +1091,10 @@ class GoConfig:
             else:
                 if path not in self.TargetedPaths:
                     self.TargetedPaths.append(path)
-            self.UsePathCache = False
-        elif lower.startswith("/exc"):
-            action = lower[4]
-            path = os.path.abspath(lower[5:])
+            self.DisablePathCache = True
+        elif lower.startswith("exc"):
+            action = lower[3]
+            path = os.path.abspath(lower[4:])
 
             if action == "-":
                 if path in self.IgnoredPaths:
@@ -1093,10 +1102,10 @@ class GoConfig:
             else:
                 if path not in self.IgnoredPaths:
                     self.IgnoredPaths.append(path)
-            self.UsePathCache = False
-        elif lower.startswith("/ext"):
-            action = lower[4]
-            extension = lower[5:]
+            self.DisablePathCache = True
+        elif lower.startswith("ext"):
+            action = lower[3]
+            extension = lower[4:]
 
             if action == "-":
                 if extension in self.TargetedExtensions:
@@ -1104,50 +1113,51 @@ class GoConfig:
             else:
                 if extension not in self.TargetedExtensions:
                     self.TargetedExtensions.append(extension)
-            self.UsePathCache = False
-        elif lower == "/executables":
+            self.DisablePathCache = True
+        elif lower == "executables":
             self.IncludeAnyExecutables = not self.IncludeAnyExecutables
-            self.UsePathCache = False
-        elif lower.startswith("/hidden"):
-            action = lower[7] if len(lower) == 8 else None
+            self.DisablePathCache = True
+        elif lower.startswith("hidden"):
+            action = lower[6] if len(lower) == 8 else None
             if action == "+":
                 self.IncludeHidden = True
             elif action == "-":
                 self.IncludeHidden = False
             else:
                 self.IncludeHidden = not self.IncludeHidden
-            self.UsePathCache = False
+            self.DisablePathCache = True
 
-        elif lower.startswith("/cache"):
-            if len(lower) >= 7:
-                value = lower[6]
+        elif lower.startswith("cache"):
+            if len(lower) >= 6:
+                value = lower[5]
                 if value == "+":
                     self.UsePathCache = True
                 elif value == "-":
                     self.UsePathCache = False
+                    self.DisablePathCache = True
             else:
                 self.UsePathCache = True
-        elif lower == "/refresh":
+        elif lower == "refresh":
             self.RefreshPathCache = True
-        elif lower == "/nofuzzy":
+        elif lower == "nofuzzy":
             self.FuzzyMatch = False
-        elif lower == "/duplinks":
+        elif lower == "duplinks":
             self.IgnoreDuplicateLinks = False
-            self.UsePathCache = False
+            self.DisablePathCache = True
 
-        elif lower == "/regex":
+        elif lower == "regex":
             self.RegexTargetMatch = True
-        elif lower == "/wild":
+        elif lower == "wild":
             self.WildcardTargetMatch = True
-        elif lower.startswith("/in"):
-            mode = True if lower[3] == "+" else False
-            substring = argument[4:]
+        elif lower.startswith("in"):
+            mode = True if lower[2] == "+" else False
+            substring = argument[3:]
 
             self.DirectoryFilter.append((mode, substring))
-        elif lower.startswith("/nth"):
+        elif lower.startswith("nth"):
             self.NthMatch = 0
 
-            nthAsString = lower[5:]
+            nthAsString = lower[4:]
             if len(nthAsString) > 0:
                 self.NthMatch = int(nthAsString)
 
@@ -1159,56 +1169,56 @@ class GoConfig:
             QUIET_LEVEL += count
             self.QuietGo += count
             self.TryParseArgument("/yes")
-        elif lower == "/list":
+        elif lower == "list":
             self.TryParseArgument("/echo")
             self.TryParseArgument("/dry")
-        elif lower == "/echo":
+        elif lower == "echo":
             self.EchoTarget = True
-        elif lower == "/dry":
+        elif lower == "dry":
             self.DryRun = True
-        elif lower == "/yes":
+        elif lower == "yes":
             self.SuppressPrompts = True
 
-        elif lower == "/elevate":
+        elif lower == "elevate":
             Utils.EnsureAdmin()
-        elif lower.startswith("/cd"):
+        elif lower.startswith("cd"):
             self.ChangeWorkingDirectory = True
-            wd = argument[4:]
+            wd = argument[3:]
             if wd:
                 self.WorkingDirectory = wd
-        elif lower == "/fork":
+        elif lower == "fork":
             self.WaitForExit = False
-        elif lower == "/detach":
+        elif lower == "detach":
             self.Detach = True
-        elif lower.startswith("/waitfor-"):
-            self.WaitFor.append(int(lower[9:]))
-        elif lower == "/parallel":
+        elif lower.startswith("waitfor-"):
+            self.WaitFor.append(int(lower[8:]))
+        elif lower == "parallel":
             self.Parallel = True
-        elif lower == "/batch":
+        elif lower == "batch":
             self.Batched = True
-        elif lower.startswith("/limit-"):
-            self.ParallelLimit = int(lower[7:])
-        elif lower == "/shell":
+        elif lower.startswith("limit-"):
+            self.ParallelLimit = int(lower[6:])
+        elif lower == "shell":
             self.Shell = True
-        elif lower.startswith("/asscript"):
+        elif lower.startswith("asscript"):
             self.AsShellScript = True
             if "+" in lower:
                 self.EchoOff = False
             self.TryParseArgument("/shell")
-        elif lower == "/unsafe":
+        elif lower == "unsafe":
             self.Unsafe = True
 
-        elif argument[0] == "/" and (specifier := ApplyListSpecifier.TryParse(argument[1:])):
+        elif specifier := ApplyListSpecifier.TryParse(argument):
             self.ApplyLists.append(specifier)
-        elif lower.startswith("/rollover"):
+        elif lower.startswith("rollover"):
             self.Rollover = True
-            if "-" in lower:
+            if lower.endswith("-"):
                 self.RolloverZero = True
-        elif lower == "/noinline":
+        elif lower == "noinline":
             self.NoInline = True
-        elif lower.startswith("/repeat-"):
-            self.RepeatCount = int(lower[8:])
-        elif lower == "/crossjoin":
+        elif lower.startswith("repeat-"):
+            self.RepeatCount = int(lower[7:])
+        elif lower == "crossjoin":
             self.CrossJoin = True
 
         else:
@@ -1227,8 +1237,8 @@ class GoConfig:
         if self.AsShellScript and self.Parallel:
             Cprint(">>>/asscript cannot be used with /parallel", level=1)
 
-        if (self.Shell or self.AsShellScript) and self.ChangeWorkingDirectory:
-            Cprint(">>>/shell or /asscript and /cd cannot be used together", level=2)
+        if (self.Shell or self.AsShellScript) and (self.ChangeWorkingDirectory and self.WorkingDirectory is None):
+            Cprint(">>>/shell or /asscript and a /cd without arguments cannot be used together", level=2)
             return False
 
         if self.CrossJoin and (self.RepeatCount or self.Rollover):
@@ -1238,6 +1248,9 @@ class GoConfig:
         if self.RegexTargetMatch and self.WildcardTargetMatch:
             Cprint(">>>/regex and /wild cannot be used together", level=2)
             return False
+
+        if self.Detach and not Utils.IsWindows():
+            Cprint(">>>/detach is redundant on non-windows systems", level=1)
 
         return True
 
@@ -1786,10 +1799,14 @@ def Run(config: GoConfig, goTarget: str,
     flags = 0
     asscriptArguments = []
 
-    if not config.WaitForExit:
-        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    if config.Detach:
-        flags |= subprocess.DETACHED_PROCESS
+    if Utils.IsWindows():
+        if not config.WaitForExit:
+            flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        if config.Detach:
+            flags |= subprocess.DETACHED_PROCESS
+    else:
+        # none of the previous flags are needed
+        pass
 
     if can_print(0):
         print(">>>target: {0}".format(target))
