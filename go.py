@@ -1,4 +1,4 @@
-# VERSION 119    REV 22.02.06.02
+# VERSION 120    REV 22.02.07.01
 
 # import colorama # lazily imported
 import ctypes
@@ -158,11 +158,14 @@ def PrintHelp():
     print("                    xtr:pat  extracts the specified regex match from all arguments, and then flattens the result")
     print("                             returns group 1 (else the first match), or allows a group number like rs:rgx")
     print("                Inline (inside command arguments) markers:")
-    print("                    Syntax: %%[index of apply source, negatives allowed]%%.")
+    print("                    Syntax: %%[<nothing> | apply argument | index of apply source]%%.")
     print("                    You can use $ instead of % if your shell treats either one differently.")
     print("                    Inline markers specify where to append the apply lists, including in quoted or complex arguments.")
     print("                    Apply lists can be used more than one time.")
-    print("                    If a number is specified, it applies that list, otherwise it uses the next unused one.")
+    print("                    Specifying no argument, the next apply list will be used.")
+    print("                    Specifying a numeric index, including negatives, will use that specific apply list.")
+    print("                    Specifying an apply argument (eg. %%fapply-files.txt%% will create a new apply list and use it.")
+    print("                        The i modifier cannot be used in this case")
 
 
 def PrintExamples():
@@ -221,6 +224,163 @@ class MatchCacheItem():
         self.path = path
         self.filename = filename
         self.linkTarget : typing.Optional[str] = None
+
+
+class ApplyListSpecifier():
+    __ApplyRegex = re.compile("^([cdfghipr]|py)apply(.+)?$", re.I)
+    __ApplyArgumentRegex = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
+
+    def __init__(self,
+                 sourceType: str,
+                 modifiers: typing.Optional[typing.List[typing.Tuple[str, typing.Any]]] = None,
+                 source: typing.Optional[str] = None):
+        self.SourceType = sourceType
+        self.Modifiers = modifiers if modifiers is not None else []
+        self.Source = source
+
+        self.List = None
+        self.Used = False
+
+    @staticmethod
+    def TryParse(text: str) -> typing.Optional["ApplyListSpecifier"]:
+        m = ApplyListSpecifier.__ApplyRegex.match(text)
+        if not m:
+            return None
+
+        groups = m.groups()
+        type = groups[0]
+        argsstr = groups[1]
+        modifiers = []
+        applyArgument = None
+
+        for match in ApplyListSpecifier.__ApplyArgumentRegex.finditer(argsstr):
+            if match.group(1):
+                modifierText = match.group(1)
+                if modifierText == "e":
+                    modifiers.append(("e", None))
+                elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
+                    modifiers.append((m.group(1), m.group(2)))
+                elif m := re.match("fl(:(.+)?)?", modifierText, re.I):
+                    separator = (m.group(2) or "") if m.group(1) else None
+                    modifiers.append(("fl", separator))
+                elif m := re.match("g:(.+)", modifierText, re.I):
+                    modifiers.append(("g", m.group(1)))
+                elif m := re.match("i:(\\d+)", modifierText, re.I):
+                    modifiers.append(("i", int(m.group(1))))
+                elif m := re.match("py:([^,]+)(?:,(.+))?", modifierText, re.I):
+                    modulePath = m.group(1)
+                    moduleArgument = m.group(2)
+                    modifiers.append(("py", (modulePath, moduleArgument)))
+                elif m := re.match("rep:([^:]+):?(.+)?", modifierText, re.I):
+                    x = m.group(1)
+                    y = m.group(2) or ""
+                    modifiers.append(("rep", (x, y)))
+                elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
+                    modifierType = m.group(1)
+                    groupNumber = 1
+                    modifierValue = m.group(3)
+                    if m.group(2):
+                        groupNumber = int(m.group(2))
+
+                    if modifierType == "rm":
+                        modifiers.append((modifierType, modifierValue))
+                    elif modifierType == "rs":
+                        modifiers.append((modifierType, (groupNumber, modifierValue)))
+                    elif modifierType == "rms":
+                        modifiers.append(("rm", modifierValue))
+                        modifiers.append(("rs", (groupNumber, modifierValue)))
+                elif m := re.match("s(-?):([\\d:,-]+)", modifierText, re.I):
+                    excludeInstead = bool(m.group(1))
+                    expression = m.group(2)
+                    modifiers.append(("s", (excludeInstead, expression)))
+                elif m := re.match("sp:(.+)", modifierText, re.I):
+                    modifiers.append(("sp", m.group(1)))
+                elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
+                    modifiers.append(("ss", m.group(1)))
+                elif m := re.match("w(-)?:(.+)", modifierText, re.I):
+                    inverted = bool(m.group(1))
+                    pattern = m.group(2)
+                    modifiers.append(("w", (inverted, pattern)))
+                elif m := re.match("xtr(\\d+)?:(.+)", modifierText, re.I):
+                    groupNumber = 1
+                    pattern = m.group(2)
+                    if m.group(1):
+                        groupNumber = int(m.group(1))
+
+                    modifiers.append(("xtr", (groupNumber, pattern)))
+
+            elif match.group(2):
+                applyArgument = match.group(2)
+
+        return ApplyListSpecifier(type, modifiers, applyArgument)
+
+
+class InlineMarkerSpecifier():
+    __InlineMarkerRegex = re.compile(r"(?:%%|\$\$)(-?\d+|.+?)??(?:%%|\$\$)", re.I)
+
+    def __init__(self, index: typing.Optional[int]):
+        self.Index = index
+
+        self.ApplyList : typing.Optional[ApplyListSpecifier] = None
+
+    @staticmethod
+    def TryParseMarkers(text: str) \
+            -> typing.Optional[typing.List[typing.Union[str, "InlineMarkerSpecifier", ApplyListSpecifier]]]:
+        split = InlineMarkerSpecifier.__InlineMarkerRegex.split(text)
+        if len(split) == 1:
+            return None
+
+        toReturn = [split[0]]
+        i = 1
+        n = len(split)
+        while i < n:
+            if split[i] is None or len(split[i]) == 0:
+                piece = InlineMarkerSpecifier(None)
+            elif (intValue := Utils.TryParseInt(split[i])) is not None:
+                piece = InlineMarkerSpecifier(intValue)
+            elif (specifier := ApplyListSpecifier.TryParse(split[i])) is not None:
+                piece = specifier
+            else:
+                piece = split[i]
+
+            toReturn.append(piece)
+            toReturn.append(split[i + 1])
+            i += 2
+
+        return toReturn
+
+
+class ExternalModule():
+    def __init__(self, path: str):
+        self.path = path
+
+        moduleName = os.path.splitext(os.path.split(self.path)[1])[0]
+        self.spec = importlib.util.spec_from_file_location(moduleName, self.path)
+        self.module = importlib.util.module_from_spec(self.spec)
+        self.spec.loader.exec_module(self.module)
+
+        self._has_GetApplyList = hasattr(self.module, "GetApplyList")
+        self._has_ModifyApplyList = hasattr(self.module, "ModifyApplyList")
+
+    def Init(self, config: "GoConfig"):
+        if hasattr(self.module, "Init"):
+            self.module.Init(config)
+
+    def Exit(self):
+        if hasattr(self.module, "Exit"):
+            self.module.Exit()
+
+    def GetApplyList(self, context: ApplyListSpecifier, argument: typing.Optional[str]) -> typing.List[str]:
+        if self._has_GetApplyList:
+            return self.module.GetApplyList(context, argument)
+        else:
+            raise NotImplementedError()
+
+    def ModifyApplyList(self, context: ApplyListSpecifier, applyList: typing.List[str], argument: typing.Optional[str]) -> typing.List[str]:
+        if self._has_ModifyApplyList:
+            return self.module.ModifyApplyList(context, applyList, argument)
+        else:
+            raise NotImplementedError()
 
 
 class Utils():
@@ -724,43 +884,43 @@ class Utils():
                     recreatedArray.append(sourceArray[i])
             return recreatedArray
 
+    @staticmethod
+    def TryParseInt(text: str) -> typing.Optional[int]:
+        try:
+            return int(text)
+        except ValueError:
+            return None
 
-class ExternalModule:
-    def __init__(self, path: str):
-        self.path = path
+    @staticmethod
+    def ResolveSpecifier(item: typing.Union[InlineMarkerSpecifier, ApplyListSpecifier]) -> typing.List[str]:
+        if isinstance(item, InlineMarkerSpecifier):
+            return item.ApplyList.List
+        elif isinstance(item, ApplyListSpecifier):
+            return item.List
 
-        moduleName = os.path.splitext(os.path.split(self.path)[1])[0]
-        self.spec = importlib.util.spec_from_file_location(moduleName, self.path)
-        self.module = importlib.util.module_from_spec(self.spec)
-        self.spec.loader.exec_module(self.module)
+    class RepeatGenerator():
+        def __init__(self, item, count: int):
+            self.item = item
+            self.count = count
+            self.i = 0
 
-        self._has_GetApplyList = hasattr(self.module, "GetApplyList")
-        self._has_ModifyApplyList = hasattr(self.module, "ModifyApplyList")
+        def __len__(self):
+            return self.count
 
-    def Init(self, config: "GoConfig"):
-        if hasattr(self.module, "Init"):
-            self.module.Init(config)
+        def __iter__(self):
+            self.i = 0
+            return self
 
-    def Exit(self):
-        if hasattr(self.module, "Exit"):
-            self.module.Exit()
-
-    def GetApplyList(self, context: "GoConfig.ApplyElement", argument: typing.Optional[str]) -> typing.List[str]:
-        if self._has_GetApplyList:
-            return self.module.GetApplyList(context, argument)
-        else:
-            raise NotImplementedError()
-
-    def ModifyApplyList(self, context: "GoConfig.ApplyElement", applyList: typing.List[str], argument: typing.Optional[str]) -> typing.List[str]:
-        if self._has_ModifyApplyList:
-            return self.module.ModifyApplyList(context, applyList, argument)
-        else:
-            raise NotImplementedError()
+        def __next__(self):
+            if self.i < self.count:
+                self.i += 1
+                return self.item
+            else:
+                raise StopIteration
 
 
 class GoConfig:
     _QuietRegex = re.compile("^/(q+)uiet$", re.I)
-    _ApplyRegex = re.compile("^/([cdfghipr]|py)apply(.*)$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -801,7 +961,7 @@ class GoConfig:
         self.EchoOff = True
         self.Unsafe = False
 
-        self.ApplyLists = []  # type: typing.List[GoConfig.ApplyElement]
+        self.ApplyLists : typing.List[ApplyListSpecifier] = []
         self.Rollover = False
         self.RolloverZero = False
         self.NoInline = False
@@ -884,17 +1044,6 @@ class GoConfig:
 
         if len(config.keys()) > 0:
             Cprint(">>>config file contains extra keys: " + ", ".join(config.keys()), level=1)
-
-    class ApplyElement:
-        def __init__(self,
-                     sourceType: str,
-                     modifiers: typing.Optional[typing.List[typing.Tuple[str, typing.Any]]] = None,
-                     source: typing.Optional[str] = None):
-            self.SourceType = sourceType
-            self.Modifiers = modifiers if modifiers is not None else []
-            self.Source = source
-
-            self.List = None
 
     def TryParseArgument(self, argument: str) -> bool:
         lower = argument.lower()
@@ -1036,75 +1185,8 @@ class GoConfig:
         elif lower == "/unsafe":
             self.Unsafe = True
 
-        elif GoConfig._ApplyRegex.match(lower):
-            groups = GoConfig._ApplyRegex.match(argument).groups()
-            type = groups[0]
-            argsstr = groups[1]
-            argregex = re.compile("\\+\\[(.+?)\\](?=$|-|\\+)|-(.+)$", re.I)
-
-            modifiers = []
-            applyArgument = None
-
-            for match in argregex.finditer(argsstr):
-                if match.group(1):
-                    modifierText = match.group(1)
-                    if modifierText == "e":
-                        modifiers.append(("e", None))
-                    elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
-                        modifiers.append((m.group(1), m.group(2)))
-                    elif m := re.match("fl(:(.+)?)?", modifierText, re.I):
-                        separator = (m.group(2) or "") if m.group(1) else None
-                        modifiers.append(("fl", separator))
-                    elif m := re.match("g:(.+)", modifierText, re.I):
-                        modifiers.append(("g", m.group(1)))
-                    elif m := re.match("i:(\\d+)", modifierText, re.I):
-                        modifiers.append(("i", int(m.group(1))))
-                    elif m := re.match("py:([^,]+)(?:,(.+))?", modifierText, re.I):
-                        modulePath = m.group(1)
-                        moduleArgument = m.group(2)
-                        modifiers.append(("py", (modulePath, moduleArgument)))
-                    elif m := re.match("rep:([^:]+):?(.+)?", modifierText, re.I):
-                        x = m.group(1)
-                        y = m.group(2) or ""
-                        modifiers.append(("rep", (x, y)))
-                    elif m := re.match("(r[ms]+)(\\d+)?:(.+)", modifierText, re.I):
-                        modifierType = m.group(1)
-                        groupNumber = 1
-                        modifierValue = m.group(3)
-                        if m.group(2):
-                            groupNumber = int(m.group(2))
-
-                        if modifierType == "rm":
-                            modifiers.append((modifierType, modifierValue))
-                        elif modifierType == "rs":
-                            modifiers.append((modifierType, (groupNumber, modifierValue)))
-                        elif modifierType == "rms":
-                            modifiers.append(("rm", modifierValue))
-                            modifiers.append(("rs", (groupNumber, modifierValue)))
-                    elif m := re.match("s(-?):([\\d:,-]+)", modifierText, re.I):
-                        excludeInstead = bool(m.group(1))
-                        expression = m.group(2)
-                        modifiers.append(("s", (excludeInstead, expression)))
-                    elif m := re.match("sp:(.+)", modifierText, re.I):
-                        modifiers.append(("sp", m.group(1)))
-                    elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
-                        modifiers.append(("ss", m.group(1)))
-                    elif m := re.match("w(-)?:(.+)", modifierText, re.I):
-                        inverted = bool(m.group(1))
-                        pattern = m.group(2)
-                        modifiers.append(("w", (inverted, pattern)))
-                    elif m := re.match("xtr(\\d+)?:(.+)", modifierText, re.I):
-                        groupNumber = 1
-                        pattern = m.group(2)
-                        if m.group(1):
-                            groupNumber = int(m.group(1))
-
-                        modifiers.append(("xtr", (groupNumber, pattern)))
-
-                elif match.group(2):
-                    applyArgument = match.group(2)
-
-            self.ApplyLists.append(GoConfig.ApplyElement(type, modifiers, applyArgument))
+        elif argument[0] == "/" and (specifier := ApplyListSpecifier.TryParse(argument[1:])):
+            self.ApplyLists.append(specifier)
         elif lower.startswith("/rollover"):
             self.Rollover = True
             if "-" in lower:
@@ -1160,7 +1242,80 @@ class GoConfig:
             self.ExternalModules[path] = module
             return module
 
-    def ProcessApplyArguments(self, targetArguments: typing.List[str]) -> typing.List[typing.List[str]]:
+    def ProcessApplyArguments(self, targetArguments: typing.List[str]) \
+            -> typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]:
+        newArguments = []
+
+        # region preprocess inline markers and apply list usage
+
+        unresolvedMarkers = []
+
+        if self.NoInline:
+            newArguments = list(targetArguments)
+        else:
+            for argument in targetArguments:
+                markers = InlineMarkerSpecifier.TryParseMarkers(argument)
+                if markers is None:
+                    newArguments.append(argument)
+                    continue
+
+                for item in markers:
+                    if isinstance(item, str):
+                        pass
+                    elif isinstance(item, InlineMarkerSpecifier):
+                        if item.Index is None:
+                            item.applyList = None
+                            unresolvedMarkers.append(item)
+                        else:
+                            item.ApplyList = self.ApplyLists[item.Index]
+                            item.ApplyList.Used = True
+                    else:
+                        item.Modifiers = [x for x in item.Modifiers if x[0] != "i"]
+                        self.ApplyLists.append(item)
+                        marker = InlineMarkerSpecifier(len(self.ApplyLists) - 1)
+                        marker.ApplyList = item
+                        item.Used = True
+
+                newArguments.append(markers)
+
+        unusedListQueue = queue.SimpleQueue()
+        for i in range(len(self.ApplyLists)):
+            applyList = self.ApplyLists[i]
+            if any(x[0] == "i" for x in applyList.Modifiers):
+                applyList.Used = True
+                for modifier in applyList.Modifiers:
+                    if modifier[0] == "i":
+                        marker = InlineMarkerSpecifier(i)
+                        marker.ApplyList = applyList
+                        newArguments.insert(modifier[1], marker)
+            elif not applyList.Used:
+                unusedListQueue.put((i, applyList))
+
+        sequentialIndex = 0
+        for marker in unresolvedMarkers:
+            if unusedListQueue.empty():
+                i = sequentialIndex
+                nextList = self.ApplyLists[sequentialIndex]
+                sequentialIndex += 1
+                if sequentialIndex >= len(self.ApplyLists):
+                    sequentialIndex = 0
+            else:
+                (i, nextList) = unusedListQueue.get()
+
+            marker.Index = i
+            marker.ApplyList = nextList
+            nextList.Used = True
+
+        while not unusedListQueue.empty():
+            (i, applyList) = unusedListQueue.get()
+            marker = InlineMarkerSpecifier(i)
+            marker.ApplyList = applyList
+            applyList.Used = True
+
+            newArguments.append(marker)
+
+        # endregion
+
         if len(self.ApplyLists) == 0:
             repeat = 1 if self.RepeatCount is None else self.RepeatCount
             return [[x] * repeat for x in targetArguments]
@@ -1309,85 +1464,36 @@ class GoConfig:
 
         # endregion
 
-        newArguments = []
-
-        # region process indexers and inline markers
-
-        self._ApplyListsUsed = [False] * len(self.ApplyLists)
-        self._CurrentApplyListIndex = 0
-
-        if self.NoInline:
-            newArguments.extend(targetArguments)
-        else:
-            for targetArgument in targetArguments:
-                newArgument = self._ProcessInlineMarker(targetArgument)
-                newArguments.append(newArgument)
-
-        for i in range(len(self.ApplyLists)):
-            applyArgument = self.ApplyLists[i]
-            for indexer in (x for x in applyArgument.Modifiers if x[0] == "i"):
-                newArguments.insert(indexer[1], applyArgument.List)
-                self._ApplyListsUsed[i] = True
+        # region expand and flatten/transpose lists
 
         applyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
 
         for i in range(len(newArguments)):
-            if isinstance(newArguments[i], str):
-                newArguments[i] = [newArguments[i]] * applyLength
+            argument = newArguments[i]
 
-        for i in range(len(self.ApplyLists)):
-            if not self._ApplyListsUsed[i]:
-                newArguments.append(self.ApplyLists[i].List)
+            if isinstance(argument, list):
+                result = []
+                temp = []
 
-        # endregion
+                for item in argument:
+                    if isinstance(item, str):
+                        if len(item) > 0:
+                            temp.append(Utils.RepeatGenerator(item, applyLength))
+                    else:
+                        temp.append(Utils.ResolveSpecifier(item))
 
-        # region flatten expanded lists
+                for transposed in zip(*temp):
+                    result.append("".join(transposed))
+            elif isinstance(argument, str):
+                result = Utils.RepeatGenerator(argument, applyLength)
+            else:
+                result = Utils.ResolveSpecifier(argument)
 
-        i = 0
-        while i < len(newArguments):
-            arg = newArguments[i]
-
-            if isinstance(arg[0], list):
-                newArguments.pop(i)
-                for j in range(len(arg[0])):
-                    flattened = []
-                    for k in arg:
-                        flattened.append(k[j])
-                    newArguments.insert(i, flattened)
-                    i += 1
-            i += 1
+            newArguments[i] = result
 
         # endregion
 
         return newArguments
-
-    _InlineMarkerRegex = re.compile(r"(?:%%|\$\$)(-?\d*)(?:%%|\$\$)", re.I)
-
-    def _ProcessInlineMarker(self, argument: str) -> typing.Union[str, typing.List[str]]:
-        matches = list(GoConfig._InlineMarkerRegex.finditer(argument))
-        if not matches:
-            return argument
-
-        processed = []
-        for match in matches:
-            if match.group(1):
-                applyIndex = int(match.group(1))
-                if applyIndex < -len(self.ApplyLists) or applyIndex >= len(self.ApplyLists):
-                    return argument
-            else:
-                applyIndex = self._CurrentApplyListIndex
-
-            sourceList = list(self.ApplyLists[applyIndex].List)
-            self._ApplyListsUsed[applyIndex] = True
-            self._CurrentApplyListIndex = (applyIndex + 1) % len(self.ApplyLists)
-
-            if not processed:
-                processed = [argument] * len(sourceList)
-
-            markerString = match.group(0)
-            for i in range(len(processed)):
-                processed[i] = processed[i].replace(markerString, sourceList[i])
-        return processed
 
 
 class ParallelRunner:
@@ -1629,7 +1735,9 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
     return exactMatches[0]
 
 
-def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.List[str]]) -> typing.Optional[int]:
+def Run(config: GoConfig, goTarget: str,
+        targetArguments: typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]) \
+        -> typing.Optional[int]:
     runs = 1
     if config.RepeatCount is not None and len(targetArguments) == 0:
         runs = config.RepeatCount
@@ -1685,9 +1793,7 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
     shouldEchoTarget = config.EchoTarget and can_print(1)
     echoActualTarget = target if not config.AsShellScript else goTarget
 
-    for run in range(runs):
-        arguments = [y for x in targetArguments for y in x[run:run + 1]]
-
+    for arguments in zip(*targetArguments):
         if shouldEchoTarget:
             if config.Unsafe:
                 print(echoActualTarget + " " + " ".join(arguments))
@@ -1696,13 +1802,13 @@ def Run(config: GoConfig, goTarget: str, targetArguments: typing.List[typing.Lis
         if config.DryRun:
             continue
         if config.AsShellScript:
-            asscriptArguments.append([goTarget] + arguments)
+            asscriptArguments.append([goTarget] + list(arguments))
             continue
 
         if config.Unsafe:
             runArgument = target + " " + " ".join(arguments)
         else:
-            runArgument = [target] + arguments
+            runArgument = [target] + list(arguments)
 
         subprocessArgs = {"args": runArgument, "shell": config.Shell, "cwd": directory, "creationflags": flags,
                           "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
@@ -1752,8 +1858,7 @@ if __name__ == "__main__":
         Utils.WaitForProcesses(config.WaitFor)
 
     target = sys.argv[i]
-    targetArguments = sys.argv[i + 1:]
-    targetArguments = config.ProcessApplyArguments(targetArguments)
+    targetArguments = config.ProcessApplyArguments(sys.argv[i + 1:])
 
     result = Run(config, target, targetArguments)
     for modulePath in config.ExternalModules:
