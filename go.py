@@ -1,6 +1,5 @@
-# VERSION 122    REV 22.02.07.03
+# VERSION 123    REV 22.02.07.04
 
-# import colorama # lazily imported
 import ctypes
 import difflib
 import fnmatch
@@ -9,7 +8,6 @@ import itertools
 import json
 import os
 import pickle
-# import psutil # lazily imported
 import queue
 import re
 import subprocess
@@ -22,6 +20,11 @@ import stat
 import sys
 import unicodedata
 import urllib.request
+
+# lazily imported optional requirements:
+# import colorama
+# import psutil
+# import pyperclip
 
 
 QUIET_LEVEL = 0
@@ -601,35 +604,57 @@ class Utils():
 
         return substring.lower() in directory.lower()
 
-    _Clipboard_ValuesInitialized = False
-    _Clipboard_Kernel32 = None
-    _Clipboard_User32 = None
+    __Clipboard_ValuesInitialized = False
+    __Clipboard_Kernel32 = None
+    __Clipboard_User32 = None
+    @staticmethod
+    def __classicGetClipboardWindows() -> str:
+        if not Utils.__Clipboard_ValuesInitialized:
+            Utils.__Clipboard_Kernel32 = ctypes.windll.kernel32
+            Utils.__Clipboard_Kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+            Utils.__Clipboard_Kernel32.GlobalLock.restype = ctypes.c_void_p
+            Utils.__Clipboard_Kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            Utils.__Clipboard_User32 = ctypes.windll.user32
+            Utils.__Clipboard_User32.GetClipboardData.restype = ctypes.c_void_p
+
+            Utils.__Clipboard_ValuesInitialized = True
+
+        Utils.__Clipboard_User32.OpenClipboard(0)
+        try:
+            if Utils.__Clipboard_User32.IsClipboardFormatAvailable(1):  # CF_TEXT
+                data = Utils.__Clipboard_User32.GetClipboardData(1)  # CF_TEXT
+                data_locked = Utils.__Clipboard_Kernel32.GlobalLock(data)
+                text = ctypes.c_char_p(data_locked)
+                value = text.value
+                Utils.__Clipboard_Kernel32.GlobalUnlock(data_locked)
+                return value.decode("utf-8")
+        finally:
+            Utils.__Clipboard_User32.CloseClipboard()
+
+        return ""
+
+    PYPERCLIP_AVAILABLE = None
 
     @staticmethod
     def GetClipboardText() -> str:
-        if not Utils._Clipboard_ValuesInitialized:
-            Utils._Clipboard_Kernel32 = ctypes.windll.kernel32
-            Utils._Clipboard_Kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-            Utils._Clipboard_Kernel32.GlobalLock.restype = ctypes.c_void_p
-            Utils._Clipboard_Kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-            Utils._Clipboard_User32 = ctypes.windll.user32
-            Utils._Clipboard_User32.GetClipboardData.restype = ctypes.c_void_p
+        if Utils.PYPERCLIP_AVAILABLE is None:
+            if "pyperclip" not in sys.modules:
+                try:
+                    import pyperclip
+                    Utils.PYPERCLIP_AVAILABLE = True
+                except ModuleNotFoundError:
+                    Utils.PYPERCLIP_AVAILABLE = False
+            else:
+                Utils.PYPERCLIP_AVAILABLE = True
 
-            Utils._Clipboard_ValuesInitialized = True
-
-        Utils._Clipboard_User32.OpenClipboard(0)
-        try:
-            if Utils._Clipboard_User32.IsClipboardFormatAvailable(1):  # CF_TEXT
-                data = Utils._Clipboard_User32.GetClipboardData(1)  # CF_TEXT
-                data_locked = Utils._Clipboard_Kernel32.GlobalLock(data)
-                text = ctypes.c_char_p(data_locked)
-                value = text.value
-                Utils._Clipboard_Kernel32.GlobalUnlock(data_locked)
-                return value.decode("utf-8")
-        finally:
-            Utils._Clipboard_User32.CloseClipboard()
-
-        return ""
+        if Utils.PYPERCLIP_AVAILABLE:
+            return pyperclip.paste()
+        elif Utils.IsWindows():
+            Cprint(">>>pyperclip module not found; defaulting to classic ctypes method", level=1)
+            return Utils.__classicGetClipboardWindows()
+        else:
+            Cprint(">>>pyperclip module not found; clipboard will not work!", level=2)
+            return ""
 
     SAVED_STDIN = []
 
@@ -660,8 +685,8 @@ class Utils():
     def CaptureGoOutput(command: str, stdinLines: typing.List[str] = None) -> typing.List[str]:
         lines = []
 
-        process = subprocess.Popen("go /qqquiet " + command, shell=True, stdout=subprocess.PIPE, stderr=sys.stderr,
-                                   stdin=subprocess.PIPE if stdinLines else sys.stdin)
+        process = subprocess.Popen("go /qqquiet " + command, shell=config.Shell,
+                                   stdout=subprocess.PIPE, stderr=sys.stderr, stdin=subprocess.PIPE if stdinLines else sys.stdin)
 
         if stdinLines:
             (stdout, _) = process.communicate(input=os.linesep.join(stdinLines).encode("utf-8"))
@@ -1351,7 +1376,7 @@ class GoConfig:
         duplicatesToDo = []
         for applyArgument in self.ApplyLists:
             if applyArgument.SourceType == "c":
-                applyArgument.List = [x for x in Utils.GetClipboardText().split("\r\n") if len(x) > 0]
+                applyArgument.List = [x for x in Utils.GetClipboardText().splitlines() if len(x) > 0]
             elif applyArgument.SourceType == "d":
                 # processed right after every other list
                 duplicatesToDo.append((self.ApplyLists[int(applyArgument.Source)], applyArgument))
