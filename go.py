@@ -1,4 +1,4 @@
-# VERSION 124    REV 22.02.07.05
+# VERSION 125    REV 22.02.08.01
 
 import ctypes
 import difflib
@@ -1848,7 +1848,7 @@ def Run(config: GoConfig, goTarget: str,
     shouldEchoTarget = config.EchoTarget and can_print(1)
     echoActualTarget = target if not config.AsShellScript else goTarget
 
-    for arguments in zip(*targetArguments):
+    for arguments in (zip(*targetArguments) if len(targetArguments) > 0 else [[]]):
         if shouldEchoTarget:
             if config.Unsafe:
                 print(echoActualTarget + " " + " ".join(arguments))
