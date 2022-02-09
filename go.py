@@ -1,4 +1,4 @@
-# VERSION 125    REV 22.02.08.01
+# VERSION 126    REV 22.02.09.01
 
 import ctypes
 import difflib
@@ -120,6 +120,10 @@ def PrintHelp():
     print("/detach       : Detaches child processes, but can create unwanted windows. Usually used with /fork.")
     print("/waitfor-XX   : Delays execution until after the specified process (PID) has stopped running. Can be repeated.")
     print("                Requires the \"psutil\" python module.")
+    print("/priority[+=-]XX : Change the target process' priority. + and - change the value relative to the current")
+    print("                       process' priority, while = sets it directly.")
+    print("                   XX is an integer in the range: [-2, 3] on Windows, [-20, 20] otherwise.")
+    print("                   Requires the \"psutil\" python module on Windows.")
     print("/parallel     : Starts all instances, and then waits for all. Valid only with /*apply argument.")
     print("/limit-XX     : Limits parallel runs to have at most XX targets running at once.")
     print("/batch-XX     : Batches parallel runs in sizes of XX. Valid only after /parallel.")
@@ -401,12 +405,12 @@ class ExternalModule():
 
 
 class Utils():
-    _isWindows = None
+    __isWindows = None
     @staticmethod
     def IsWindows() -> bool:
-        if Utils._isWindows is None:
-            Utils._isWindows = (sys.platform == "win32")
-        return Utils._isWindows
+        if Utils.__isWindows is None:
+            Utils.__isWindows = (sys.platform == "win32")
+        return Utils.__isWindows
 
     COLORAMA_INITED = False
     COLORAMA_AVAILABLE = False
@@ -564,8 +568,7 @@ class Utils():
 
         return matches
 
-    _Compare_RegexObject = None
-
+    __Compare_RegexObject = None
     @staticmethod
     def ComparePathAndPattern(file: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) \
             -> float:
@@ -579,10 +582,10 @@ class Utils():
 
             return int(filename == pattern or file == pattern)
         elif asRegex:
-            if Utils._Compare_RegexObject is None:
-                Utils._Compare_RegexObject = re.compile(pattern, re.I)
+            if Utils.__Compare_RegexObject is None:
+                Utils.__Compare_RegexObject = re.compile(pattern, re.I)
 
-            if Utils._Compare_RegexObject.match(filename) or Utils._Compare_RegexObject.match(file):
+            if Utils.__Compare_RegexObject.match(filename) or Utils.__Compare_RegexObject.match(file):
                 return 1
             else:
                 return 0
@@ -633,21 +636,20 @@ class Utils():
 
         return ""
 
-    PYPERCLIP_AVAILABLE = None
-
+    __PYPERCLIP_AVAILABLE = None
     @staticmethod
     def GetClipboardText() -> str:
-        if Utils.PYPERCLIP_AVAILABLE is None:
+        if Utils.__PYPERCLIP_AVAILABLE is None:
             if "pyperclip" not in sys.modules:
                 try:
                     import pyperclip
-                    Utils.PYPERCLIP_AVAILABLE = True
+                    Utils.__PYPERCLIP_AVAILABLE = True
                 except ModuleNotFoundError:
-                    Utils.PYPERCLIP_AVAILABLE = False
+                    Utils.__PYPERCLIP_AVAILABLE = False
             else:
-                Utils.PYPERCLIP_AVAILABLE = True
+                Utils.__PYPERCLIP_AVAILABLE = True
 
-        if Utils.PYPERCLIP_AVAILABLE:
+        if Utils.__PYPERCLIP_AVAILABLE:
             return pyperclip.paste()
         elif Utils.IsWindows():
             Cprint(">>>pyperclip module not found; defaulting to classic ctypes method", level=1)
@@ -657,7 +659,6 @@ class Utils():
             return ""
 
     SAVED_STDIN = []
-
     @staticmethod
     def ReadStdin() -> typing.List[str]:
         if Utils.SAVED_STDIN:
@@ -831,14 +832,26 @@ class Utils():
         else:
             return shlex.quote(text)
 
+    __PSUTIL_AVAILABLE = None
+    @staticmethod
+    def _tryImportPsutil() -> bool:
+        if Utils.__PSUTIL_AVAILABLE is None:
+            if "psutil" not in sys.modules:
+                try:
+                    import psutil
+                    Utils.__PSUTIL_AVAILABLE = True
+                except ModuleNotFoundError:
+                    Utils.__PSUTIL_AVAILABLE = False
+            else:
+                Utils.__PSUTIL_AVAILABLE = True
+
+        return Utils.__PSUTIL_AVAILABLE
+
     @staticmethod
     def WaitForProcesses(pids: typing.List[int]):
-        if "psutil" not in sys.modules:
-            try:
-                import psutil
-            except ModuleNotFoundError:
-                Cprint(">>>psutil module not found; /waitfor will not work!", level=2)
-                return
+        if not Utils._tryImportPsutil():
+            Cprint(">>>psutil module not found; /waitfor will not work!", level=2)
+            return
 
         exited = [False]*len(pids)
         Cprint("Waiting for: " + ", ".join(str(x) for x in pids))
@@ -957,6 +970,98 @@ class Utils():
             else:
                 raise StopIteration
 
+    class PriorityModifier():
+        __Inited = None
+        __WindowsPriorityClasses = None
+
+        def __init__(self, priorityOrOffset: int, offset: bool):
+            assert(Utils.PriorityModifier.__setup())
+
+            self.PriorityOrOffset = priorityOrOffset
+            self.Offset = offset
+
+            self.__originalPriority: typing.Optional[int] = None
+            self.__skip = (priorityOrOffset == 0 and offset == True)
+
+        def __enter__(self):
+            if self.__skip:
+                return self
+
+            selfPid = os.getpid()
+
+            self.__originalPriority = Utils.PriorityModifier.GetPriority(selfPid)
+            Utils.PriorityModifier.SetPriority(selfPid, self.PriorityOrOffset, self.Offset)
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self.__skip:
+                return
+            Utils.PriorityModifier.SetPriority(os.getpid(), self.__originalPriority, False)
+
+        @staticmethod
+        def __setup() -> bool:
+            if Utils.PriorityModifier.__Inited is not None:
+                return Utils.PriorityModifier.__Inited
+
+            if Utils.IsWindows():
+                if not Utils._tryImportPsutil():
+                    Cprint(">>>psutil module not found; /priority will not work!", level=2)
+                    Utils.PriorityModifier.__Inited = False
+                    return False
+
+                if Utils.PriorityModifier.__WindowsPriorityClasses is None:
+                    mapping = {
+                        -2: psutil.IDLE_PRIORITY_CLASS,
+                        -1: psutil.BELOW_NORMAL_PRIORITY_CLASS,
+                        0: psutil.NORMAL_PRIORITY_CLASS,
+                        1: psutil.ABOVE_NORMAL_PRIORITY_CLASS,
+                        2: psutil.HIGH_PRIORITY_CLASS,
+                        3: psutil.REALTIME_PRIORITY_CLASS,
+                    }
+                    Utils.PriorityModifier.__WindowsPriorityClasses = (
+                        mapping,
+                        {v: k for (k, v) in mapping.items()}
+                    )
+
+            Utils.PriorityModifier.__Inited = True
+            return True
+
+        @staticmethod
+        def GetPriority(pid: int) -> int:
+            assert (Utils.PriorityModifier.__setup())
+
+            if Utils.IsWindows():
+                priority = Utils.PriorityModifier.__WindowsPriorityClasses[1][psutil.Process(pid).nice()]
+            else:
+                priority = os.getpriority(os.PRIO_PROCESS, pid)
+
+            return priority
+
+
+        @staticmethod
+        def SetPriority(pid: int, priorityOrOffset: int, offset: bool):
+            assert(Utils.PriorityModifier.__setup())
+
+            if offset:
+                if Utils.IsWindows():
+                    priority = Utils.PriorityModifier.__WindowsPriorityClasses[1][psutil.Process().nice()]
+                else:
+                    priority = os.getpriority(os.PRIO_PROCESS, 0)
+                priorityOffset = priorityOrOffset
+            else:
+                priority = priorityOrOffset
+                priorityOffset = 0
+
+            newPriority = priority + priorityOffset
+
+            if Utils.IsWindows():
+                newPriority = max(-2, min(newPriority, 3))
+                newPriority = Utils.PriorityModifier.__WindowsPriorityClasses[0][newPriority]
+            else:
+                newPriority = max(-20, min(newPriority, 20))
+
+            psutil.Process(pid).nice(newPriority)
+
 
 class GoConfig:
     _QuietRegex = re.compile("^(q+)uiet$", re.I)
@@ -979,7 +1084,7 @@ class GoConfig:
 
         self.RegexTargetMatch = False
         self.WildcardTargetMatch = False
-        self.DirectoryFilter = []  # type: typing.List[typing.Tuple[bool, str]]
+        self.DirectoryFilter: typing.List[typing.Tuple[bool, str]] = []
         self.NthMatch = None
         self.FirstMatchFromConfig = False
 
@@ -992,7 +1097,8 @@ class GoConfig:
         self.WorkingDirectory = None
         self.WaitForExit = True
         self.Detach = False
-        self.WaitFor = []  # type: typing.List[int]
+        self.WaitFor: typing.List[int] = []
+        self.Priority: typing.Tuple[int, bool] = (0, True)
         self.Parallel = False
         self.Batched = False
         self.ParallelLimit = None
@@ -1217,6 +1323,14 @@ class GoConfig:
             self.Detach = True
         elif lower.startswith("waitfor-"):
             self.WaitFor.append(int(lower[8:]))
+        elif lower.startswith("priority"):
+            value = int(lower[9:])
+            if lower[8] == "-":
+                self.Priority = (-value, True)
+            elif lower[8] == "+":
+                self.Priority = (value, True)
+            elif lower[8] == "=":
+                self.Priority = (value, False)
         elif lower == "parallel":
             self.Parallel = True
         elif lower == "batch":
@@ -1593,7 +1707,7 @@ class ParallelRunner:
             semaphore.acquire()
 
             thread = threading.Thread(target=ParallelRunner._RunInstance,
-                                      args=(dict(run), semaphore, self._PrintArray, self._PrintArrayLock))
+                                      args=(dict(run), semaphore, self._PrintArray, self._PrintArrayLock, self._Configuration.Priority))
             threads.append(thread)
 
             thread.start()
@@ -1603,7 +1717,8 @@ class ParallelRunner:
 
     @staticmethod
     def _RunInstance(runParameters: dict, doneSemaphore: threading.Semaphore,
-                     printList: typing.List, printListLock: threading.Lock):
+                     printList: typing.List, printListLock: threading.Lock,
+                     priority: typing.Tuple[int, bool]):
         if "stdout" in runParameters and runParameters["stdout"] == sys.stdout:
             runParameters["stdout"] = subprocess.PIPE
         if "stderr" in runParameters and runParameters["stderr"] == sys.stderr:
@@ -1614,7 +1729,8 @@ class ParallelRunner:
             printIndex = len(printList)
             printList.append(None)
 
-        process = subprocess.Popen(**runParameters)
+        with Utils.PriorityModifier(*priority):
+            process = subprocess.Popen(**runParameters)
 
         for line in Utils.StreamOutput(process):
             with printListLock:
@@ -1871,9 +1987,10 @@ def Run(config: GoConfig, goTarget: str,
         if config.Parallel:
             parallelRunner.EnqueueRun(subprocessArgs)
         else:
-            result = runMethod(**subprocessArgs)
+            with Utils.PriorityModifier(*config.Priority):
+                process = runMethod(**subprocessArgs)
             if config.WaitForExit and runs == 1:
-                return result.returncode
+                return process.returncode
 
     if config.DryRun:
         return 0
@@ -1884,9 +2001,10 @@ def Run(config: GoConfig, goTarget: str,
         tempscriptPath = Utils.CreateScriptFile(asscriptArguments, config.EchoOff)
         subprocessArgs = {"args": [tempscriptPath], "shell": True, "cwd": directory, "creationflags": flags,
                           "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
-        result = runMethod(**subprocessArgs)
+        with Utils.PriorityModifier(*config.Priority):
+            process = runMethod(**subprocessArgs)
         if config.WaitForExit:
-            return result.returncode
+            return process.returncode
 
 
 if __name__ == "__main__":
