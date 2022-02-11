@@ -1,4 +1,4 @@
-# VERSION 126    REV 22.02.09.01
+# VERSION 127    REV 22.02.11.01
 
 import ctypes
 import difflib
@@ -21,10 +21,28 @@ import sys
 import unicodedata
 import urllib.request
 
-# lazily imported optional requirements:
-# import colorama
-# import psutil
-# import pyperclip
+# optional requirements:
+
+COLORAMA_AVAILABLE = False
+try:
+    import colorama
+    COLORAMA_AVAILABLE = True
+except:
+    pass
+
+PSUTIL_AVAILABLE = False
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except:
+    pass
+
+PYPERCLIP_AVAILABLE = False
+try:
+    import pyperclip
+    PYPERCLIP_AVAILABLE = True
+except:
+    pass
 
 
 QUIET_LEVEL = 0
@@ -412,27 +430,25 @@ class Utils():
             Utils.__isWindows = (sys.platform == "win32")
         return Utils.__isWindows
 
-    COLORAMA_INITED = False
-    COLORAMA_AVAILABLE = False
+    __COLORAMA_INITED = False
     @staticmethod
     def TryInitColorama() -> bool:
-        if Utils.COLORAMA_INITED:
-            return Utils.COLORAMA_AVAILABLE
+        if not COLORAMA_AVAILABLE:
+            return False
+        if Utils.__COLORAMA_INITED:
+            return True
 
         try:
-            import colorama
             colorama.init()
-            Utils.COLORAMA_AVAILABLE = True
+            Utils.__COLORAMA_INITED = True
+            return True
         except ModuleNotFoundError:
             Cprint(">>>colorama module not found; clearing screen the classic way", level=1)
-        Utils.COLORAMA_INITED = True
-
-        return Utils.COLORAMA_AVAILABLE
+            return False
 
     @staticmethod
     def ClearScreen():
-        if Utils.COLORAMA_AVAILABLE:
-            import colorama
+        if COLORAMA_AVAILABLE and Utils.__COLORAMA_INITED:
             print(colorama.ansi.clear_screen())
         else:
             if Utils.IsWindows():
@@ -636,20 +652,9 @@ class Utils():
 
         return ""
 
-    __PYPERCLIP_AVAILABLE = None
     @staticmethod
     def GetClipboardText() -> str:
-        if Utils.__PYPERCLIP_AVAILABLE is None:
-            if "pyperclip" not in sys.modules:
-                try:
-                    import pyperclip
-                    Utils.__PYPERCLIP_AVAILABLE = True
-                except ModuleNotFoundError:
-                    Utils.__PYPERCLIP_AVAILABLE = False
-            else:
-                Utils.__PYPERCLIP_AVAILABLE = True
-
-        if Utils.__PYPERCLIP_AVAILABLE:
+        if PYPERCLIP_AVAILABLE:
             return pyperclip.paste()
         elif Utils.IsWindows():
             Cprint(">>>pyperclip module not found; defaulting to classic ctypes method", level=1)
@@ -832,24 +837,9 @@ class Utils():
         else:
             return shlex.quote(text)
 
-    __PSUTIL_AVAILABLE = None
-    @staticmethod
-    def _tryImportPsutil() -> bool:
-        if Utils.__PSUTIL_AVAILABLE is None:
-            if "psutil" not in sys.modules:
-                try:
-                    import psutil
-                    Utils.__PSUTIL_AVAILABLE = True
-                except ModuleNotFoundError:
-                    Utils.__PSUTIL_AVAILABLE = False
-            else:
-                Utils.__PSUTIL_AVAILABLE = True
-
-        return Utils.__PSUTIL_AVAILABLE
-
     @staticmethod
     def WaitForProcesses(pids: typing.List[int]):
-        if not Utils._tryImportPsutil():
+        if not PSUTIL_AVAILABLE:
             Cprint(">>>psutil module not found; /waitfor will not work!", level=2)
             return
 
@@ -1004,7 +994,7 @@ class Utils():
                 return Utils.PriorityModifier.__Inited
 
             if Utils.IsWindows():
-                if not Utils._tryImportPsutil():
+                if not PSUTIL_AVAILABLE:
                     Cprint(">>>psutil module not found; /priority will not work!", level=2)
                     Utils.PriorityModifier.__Inited = False
                     return False
