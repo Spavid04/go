@@ -1,4 +1,4 @@
-# VERSION 127    REV 22.02.11.01
+# VERSION 128    REV 22.02.15.01
 
 import ctypes
 import difflib
@@ -422,6 +422,46 @@ class ExternalModule():
             raise NotImplementedError()
 
 
+class GoFilter():
+    def __init__(self, path: str):
+        self.Path = path
+
+        self.Includes: typing.List[str] = []
+        self.Excludes: typing.List[str] = []
+        self.SubIncludes: typing.List[str] = []
+        self.SubExcludes: typing.List[str] = [] # todo
+
+        self.__Read()
+
+    def __Read(self):
+        with open(self.Path, "r") as f:
+            gofilterFilters = f.read().splitlines()
+
+        for line in gofilterFilters:
+            hasSubdir = "/" in line or "\\" in line
+
+            if line.startswith("+"):
+                if hasSubdir:
+                    self.SubIncludes.append(line[1:])
+                else:
+                    self.Includes.append(line[1:])
+            else:
+                text = line
+                if text.startswith("-"):
+                    text = text[1:]
+                if hasSubdir:
+                    self.SubExcludes.append(text)
+                else:
+                    self.Excludes.append(text)
+
+    def Match(self, text: str) -> typing.Literal[-1, 1]:
+        if any(fnmatch.fnmatch(text, x) for x in self.Includes):
+            return 1
+        if any(fnmatch.fnmatch(text, x) for x in self.Excludes):
+            return -1
+        return 1
+
+
 class Utils():
     __isWindows = None
     @staticmethod
@@ -505,34 +545,19 @@ class Utils():
                 for (root, dirs, files) in os.walk(targetedPath, topdown=True):
                     if ".gofilter" in files:
                         files.remove(".gofilter")
+                        filter = GoFilter(os.path.join(root, ".gofilter"))
 
-                        with open(os.path.join(root, ".gofilter"), "r") as f:
-                            gofilterFilters = f.read().splitlines()
-
-                        gofilterIgnores = []
-                        gofilterIncludes = []
-                        for filter in gofilterFilters:
-                            if filter[0] == "+":
-                                fullpath = os.path.join(root, os.path.normcase(filter[1:]))
-                                if os.path.isdir(fullpath):
-                                    pathQueue.put(fullpath)
-                                else:
-                                    gofilterIncludes.append(filter[1:])
-                            elif filter[0] == "-":
-                                gofilterIgnores.append(filter[1:])
-                            else:
-                                gofilterIgnores.append(filter)
-
-                        dirs_copy = list(dirs)
-                        for dir in dirs_copy:
-                            if any(fnmatch.fnmatch(dir, x) for x in gofilterIgnores) \
-                                    and not any(fnmatch.fnmatch(dir, x) for x in gofilterIncludes):
+                        for dir in list(dirs):
+                            if filter.Match(dir) == -1:
                                 dirs.remove(dir)
-                        files_copy = list(files)
-                        for file in files_copy:
-                            if any(fnmatch.fnmatch(file, x) for x in gofilterIgnores) \
-                                    and not any(fnmatch.fnmatch(file, x) for x in gofilterIncludes):
+
+                        for file in list(files):
+                            if filter.Match(file) == -1:
                                 files.remove(file)
+
+                        for item in filter.SubIncludes:
+                            abspath = os.path.abspath(os.path.join(root, os.path.normcase(item)))
+                            pathQueue.put(abspath)
 
                     if recursive and (ignoredDirectories or not includeHidden):
                         dirs_copy = list(dirs)
@@ -555,6 +580,8 @@ class Utils():
 
                     for file in files:
                         fullpath = os.path.join(root, file)
+                        if "/" in file or "\\" in file:
+                            file = os.path.split(file)[1]
 
                         if not includeHidden:
                             if Utils.IsHidden(fullpath):
@@ -871,7 +898,7 @@ class Utils():
     def GetDefaultExecutableExtensions() -> typing.List[str]:
         if Utils.IsWindows():
             extensions = {".exe", ".com", ".bat", ".cmd", ".ps1", ".py"}
-            extensions.update(x.lower() for x in os.environ["PATH"].split(os.pathsep))
+            extensions.update(x.lower() for x in os.environ["PATHEXT"].split(os.pathsep))
             extensions = list(extensions)
         else:
             extensions = [".sh", ".py"]
