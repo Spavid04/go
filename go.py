@@ -1,4 +1,4 @@
-# VERSION 129    REV 22.02.18.01
+# VERSION 130    REV 22.02.19.01
 
 import ctypes
 import difflib
@@ -52,8 +52,8 @@ def can_print(level: int) -> bool:
 def Cprint(*args, level: int = 0, **kwargs):
     if not can_print(level):
         return
-
     print(*args, **kwargs)
+
 def Cprint_gen(level: int) -> typing.Callable:
     return lambda *args, **kwargs: Cprint(*args, level=level, **kwargs)
 
@@ -102,6 +102,7 @@ def PrintHelp():
     print("Avaliable go arguments:")
     print("All arguments accept a -- prefix instead of /")
     print()
+    print("/update       : Check for go.py script update.")
     print("/config-XXXX  : Uses the specified config file.")
     print()
     print("/ext[+-]XXXX  : Adds or removes the extension to the executable extensions list.")
@@ -255,6 +256,51 @@ def PrintModulehelp():
     print("    GetApplyList(context, argument):  return a list of strings to be used as an apply source (context); accepts a string argument")
     print("    ModifyApplyList(context, applyList, argument):  modify the source (context) list of strings (applyList) and return a list of strings; accepts a string argument")
     print("Go modules can be placed in the \"go_modules\" directory created next to go.py, and they will be seen automatically.")
+
+
+class Updater():
+    SCRIPT_URL_PREFIX = "https://raw.githubusercontent.com/Spavid04/go/master/"
+
+    @staticmethod
+    def GetCurrentVersion() -> str:
+        with open(__file__, "r", encoding="utf-8") as f:
+            line = f.readline()
+        return line[1:].strip()
+
+    @staticmethod
+    def TryUpdate():
+        prnt = Cprint_gen(2)
+
+        currentVersion = Updater.GetCurrentVersion()
+        prnt(">>>current version: [%s]" % currentVersion)
+
+        newVersion = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "version.txt")
+        if currentVersion >= newVersion:
+            prnt(">>>you are using a newer version!")
+            prnt(">>>server has: [%s]" % newVersion)
+            exit(0)
+
+        prnt(">>>new version available! [%s]" % newVersion)
+        prnt(">>>source: %s" % (Updater.SCRIPT_URL_PREFIX + "go.py"))
+
+        changelog = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "changelog.txt")
+        prnt(">>>changelog:\n")
+        prnt(changelog)
+        prnt("\n\n")
+
+        prnt(">>>update? (Y/n): ")
+        choice = input()
+
+        if len(choice) > 0 and choice[0].lower() == "n":
+            prnt(">>>update cancelled")
+            exit(0)
+
+        newScriptText = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "go.py")
+        with open(__file__, "w", encoding="utf-8") as f:
+            f.write(newScriptText)
+
+        prnt(">>>all ok!")
+        exit(0)
 
 
 class MatchCacheItem():
@@ -885,14 +931,9 @@ class Utils():
             time.sleep(0.1)
 
     @staticmethod
-    def GetTextFromUrl(url: str) -> typing.List[str]:
-        data = urllib.request.urlopen(url)
-        lines = []
-
-        for line in data:
-            lines.append(line.decode("utf-8"))
-
-        return lines
+    def GetTextFromUrl(url: str) -> str:
+        with urllib.request.urlopen(url) as f:
+            return f.read().decode("utf-8")
 
     @staticmethod
     def GetDefaultExecutableExtensions() -> typing.List[str]:
@@ -1224,6 +1265,9 @@ class GoConfig:
         elif lower == "modulehelp":
             PrintModulehelp()
             exit(0)
+        elif lower == "update":
+            Updater.TryUpdate()
+            exit(0)
 
         elif lower.startswith("config-"):
             path = argument[7:]
@@ -1516,7 +1560,7 @@ class GoConfig:
             elif applyArgument.SourceType == "g":
                 applyArgument.List = Utils.CaptureGoOutput(applyArgument.Source)
             elif applyArgument.SourceType == "h":
-                applyArgument.List = Utils.GetTextFromUrl(applyArgument.Source)
+                applyArgument.List = Utils.GetTextFromUrl(applyArgument.Source).splitlines()
             elif applyArgument.SourceType == "i":
                 applyArgument.List = applyArgument.Source.split(",")
             elif applyArgument.SourceType == "p":
