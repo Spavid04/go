@@ -1,4 +1,4 @@
-# VERSION 128    REV 22.02.15.01
+# VERSION 129    REV 22.02.18.01
 
 import ctypes
 import difflib
@@ -188,7 +188,7 @@ def PrintHelp():
     print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx; allows setting a group number like \"rs:rgx\"")
     print("                    s:expr   extract only the specified argument indexes from the source list; use s-:expr to invert")
     print("                             expr is a comma-separated list of python-like array indexer")
-    print("                             all indices are relative to the original list and are processed in the given order")
+    print("                             indices are processed in the given order")
     print("                    sp:pat   split all agruments into more arguments, separated by the given pat regex pattern")
     print("                             excludes blank parts")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
