@@ -1,4 +1,4 @@
-# VERSION 131    REV 22.02.22.01
+# VERSION 132    REV 22.02.22.02
 
 import ctypes
 import difflib
@@ -61,22 +61,25 @@ def Cprint_gen(level: int) -> typing.Callable:
 
 VERSION_REGEX = re.compile(r"^.*?(\d+).+(\d\d\.\d\d\.\d\d\.\d\d).*$")
 CURRENT_VERSION = None
+def parse_version(line: str) -> (str, str):
+    m = VERSION_REGEX.match(line)
+    return (m.group(1), m.group(2))
 def get_current_version() -> (str, str):
     global CURRENT_VERSION
     if CURRENT_VERSION is None:
         with open(__file__, "r", encoding="utf-8") as f:
             line = f.readline().strip()
-        m = VERSION_REGEX.match(line)
-        CURRENT_VERSION = (m.group(1), m.group(2))
+        CURRENT_VERSION = parse_version(line)
     return CURRENT_VERSION
 
 def PrintHelp():
     if not can_print(2):
         return
 
-    print("Revision %s    Version %s" % get_current_version())
+    print("Revision %s    Version Date %s" % get_current_version())
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
+    print("Run with /help to print this help.")
     print("Run with /examples to print some usage examples.")
     print("Run with /modulehelp to print help about external py scripts.")
     print()
@@ -266,25 +269,22 @@ class Updater():
     SCRIPT_URL_PREFIX = "https://raw.githubusercontent.com/Spavid04/go/master/"
 
     @staticmethod
-    def GetCurrentVersion() -> str:
-        with open(__file__, "r", encoding="utf-8") as f:
-            line = f.readline()
-        return line[1:].strip()
-
-    @staticmethod
     def TryUpdate():
         prnt = Cprint_gen(2)
 
-        currentVersion = Updater.GetCurrentVersion()
-        prnt(">>>current version: [%s]" % currentVersion)
+        currentVersion = get_current_version()
+        prnt(">>>current version:\t[revision %s    version date %s]" % currentVersion)
 
-        newVersion = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "version.txt")
+        newVersion = parse_version(Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "version.txt"))
         if currentVersion >= newVersion:
-            prnt(">>>you are using a newer version!")
-            prnt(">>>server has: [%s]" % newVersion)
+            prnt(">>>server has:\t\t[revision %s    version date %s]" % newVersion)
+            if currentVersion == newVersion:
+                prnt(">>>you are using the newest version!")
+            else:
+                prnt(">>>you are using a newer version!")
             exit(0)
 
-        prnt(">>>new version available! [%s]" % newVersion)
+        prnt(">>>new version available! [revision %s    version date %s]" % newVersion)
         prnt(">>>source: %s" % (Updater.SCRIPT_URL_PREFIX + "go.py"))
 
         changelog = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "changelog.txt")
@@ -1266,7 +1266,10 @@ class GoConfig:
             return False
         lower = argument.lower()
 
-        if lower == "examples":
+        if lower == "help":
+            PrintHelp()
+            exit(0)
+        elif lower == "examples":
             PrintExamples()
             exit(0)
         elif lower == "modulehelp":
