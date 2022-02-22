@@ -1,4 +1,4 @@
-# VERSION 130    REV 22.02.19.01
+# VERSION 131    REV 22.02.22.01
 
 import ctypes
 import difflib
@@ -45,6 +45,7 @@ except:
     pass
 
 
+MAX_QUIET_LEVEL = 3
 QUIET_LEVEL = 0
 def can_print(level: int) -> bool:
     return level >= QUIET_LEVEL
@@ -126,11 +127,13 @@ def PrintHelp():
     print("/duplinks     : Include symlinks to executables that were already found.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
-    print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is 3 q's.")
+    print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is " + str(MAX_QUIET_LEVEL) + " q's.")
+    print("/qmax         : Sets the maximum quiet level.")
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
     print("/echo         : Echoes the command to be run, including arguments, before running it.")
     print("/dry          : Does not actually run the target executable.")
     print("/list         : Alias for /echo + /dry.")
+    print("/target       : Print only the target and exit. Implies /qmax and /dry.")
     print()
     print("/cd           : Runs the target in the target's directory, instead of the current one.")
     print("                Append a -[path] to execute in the specified directory")
@@ -167,6 +170,7 @@ def PrintHelp():
     print("                    D:   needs an *-int, duplicates the specified /*apply list, without any of its modifiers")
     print("                    F:   reads the lines of a file, specified with *-path")
     print("                    G:   reads the output lines of a go command, specified with *-command; max quiet level is implied")
+    print("                         allows any standard go arguments (eg: \"/gapply-/iapply-1,2,3 cmd /c echo\"")
     print("                    H:   fetches lines from the specified URL")
     print("                    I:   reads the immediate string as a comma separated list, specified with *-text")
     print("                    P:   reads the input lines from stdin until EOF; returns the same arguments if used again")
@@ -315,9 +319,11 @@ class ApplyListSpecifier():
     __ApplyArgumentRegex = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
 
     def __init__(self,
+                 sourceText: str,
                  sourceType: str,
                  modifiers: typing.Optional[typing.List[typing.Tuple[str, typing.Any]]] = None,
                  source: typing.Optional[str] = None):
+        self.SourceText = sourceText
         self.SourceType = sourceType
         self.Modifiers = modifiers if modifiers is not None else []
         self.Source = source
@@ -397,7 +403,7 @@ class ApplyListSpecifier():
                 elif match.group(2):
                     applyArgument = match.group(2)
 
-        return ApplyListSpecifier(type, modifiers, applyArgument)
+        return ApplyListSpecifier(text, type, modifiers, applyArgument)
 
 
 class InlineMarkerSpecifier():
@@ -764,7 +770,7 @@ class Utils():
     def CaptureGoOutput(command: str, stdinLines: typing.List[str] = None) -> typing.List[str]:
         lines = []
 
-        process = subprocess.Popen("go /qqquiet " + command, shell=True,
+        process = subprocess.Popen("go /qmax " + command, shell=True,
                                    stdout=subprocess.PIPE, stderr=sys.stderr, stdin=subprocess.PIPE if stdinLines else sys.stdin)
 
         if stdinLines:
@@ -856,7 +862,7 @@ class Utils():
             ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, " ".join(args), None, 1)
         else:
             subprocess.Popen(["sudo", executable, *args])
-        exit()
+        exit(0)
 
     @staticmethod
     def Batch(list: typing.List[object], batchSize: int) -> typing.Generator[typing.List[object], None, None]:
@@ -1150,6 +1156,7 @@ class GoConfig:
         self.EchoTarget = False
         self.DryRun = False
         self.SuppressPrompts = False
+        self.PrintTarget = False
 
         self.ChangeWorkingDirectory = False
         self.WorkingDirectory = None
@@ -1353,9 +1360,11 @@ class GoConfig:
             if len(nthAsString) > 0:
                 self.NthMatch = int(nthAsString)
 
-        elif GoConfig._QuietRegex.match(argument):
-            m = GoConfig._QuietRegex.match(argument)
-            count = len(m.group(1))
+        elif (m := GoConfig._QuietRegex.match(argument)) or lower == "qmax":
+            if m is None:
+                count = MAX_QUIET_LEVEL
+            else:
+                count = min(len(m.group(1)), MAX_QUIET_LEVEL)
 
             global QUIET_LEVEL
             QUIET_LEVEL += count
@@ -1370,6 +1379,10 @@ class GoConfig:
             self.DryRun = True
         elif lower == "yes":
             self.SuppressPrompts = True
+        elif lower == "target":
+            self.PrintTarget = True
+            self.TryParseArgument("/dry")
+            self.TryParseArgument("/qmax")
 
         elif lower == "elevate":
             Utils.EnsureAdmin()
@@ -1469,7 +1482,7 @@ class GoConfig:
             return module
 
     def ProcessApplyArguments(self, targetArguments: typing.List[str]) \
-            -> typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]:
+            -> typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]] | None:
         newArguments = []
 
         # region preprocess inline markers and apply list usage
@@ -1549,7 +1562,9 @@ class GoConfig:
         # region generate lists
 
         duplicatesToDo = []
-        for applyArgument in self.ApplyLists:
+        for i in range(len(self.ApplyLists)):
+            applyArgument = self.ApplyLists[i]
+
             if applyArgument.SourceType == "c":
                 applyArgument.List = [x for x in Utils.GetClipboardText().splitlines() if len(x) > 0]
             elif applyArgument.SourceType == "d":
@@ -1576,6 +1591,10 @@ class GoConfig:
                 rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
                     applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
+
+            if not applyArgument.List:
+                Cprint(">>>apply list index %d is empty! exiting with failure... (%s)" % (i, applyArgument.SourceText), level=3)
+                return None
 
         for (sourceList, destList) in duplicatesToDo:
             destList.List = list(sourceList.List)
@@ -1923,7 +1942,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     return (exactMatches, fuzzyMatches)
 
 
-def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
+def GetDesiredMatch(config: GoConfig, target: str) -> str | None:
     (exactMatches, fuzzyMatches) = FindMatchesAndAlternatives(config, target)
 
     if len(exactMatches) == 0:
@@ -1936,7 +1955,7 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
                 (directory, filename) = os.path.split(fuzzyMatch)
                 Cprint(">>>    {0:24s} in {1}".format(filename, directory), level=2)
 
-        exit(-1)
+        return None
 
     nthMatch = config.NthMatch
     if nthMatch is None and config.FirstMatchFromConfig:
@@ -1949,14 +1968,14 @@ def GetDesiredMatchOrExit(config: GoConfig, target: str) -> str:
             (directory, filename) = os.path.split(exactMatches[i])
             Cprint(">>> [{0:2d}]\t{1:20s}\tin {2}".format(i, filename, directory), level=2)
 
-        exit(-1)
+        return None
     if len(exactMatches) > 1 and config.FirstMatchFromConfig and config.NthMatch is None:
         Cprint(">>>autoselected the first of many matches because of config \"AlwaysFirst\"!")
 
     if len(exactMatches) > 1 and nthMatch is not None:
         if nthMatch >= len(exactMatches):
             Cprint(">>>nth match index out of range!", level=2)
-            exit(-1)
+            return None
 
         return exactMatches[nthMatch]
 
@@ -1979,20 +1998,24 @@ def Run(config: GoConfig, goTarget: str,
             answer = input()
         except EOFError:
             Cprint(">>>could not read stdin; use /yes to run", level=2)
-            exit(-1)
+            return -1
 
         if len(answer) > 0 and answer[0] != "y":
-            exit(-1)
+            return -1
 
     if config.AsShellScript:
         if Utils.IsWindows():
-            target = GetDesiredMatchOrExit(config, "cmd.exe")
+            target = GetDesiredMatch(config, "cmd.exe")
         else:
-            target = GetDesiredMatchOrExit(config, "bash")
+            target = GetDesiredMatch(config, "bash")
     elif config.Shell:
         target = goTarget
     else:
-        target = GetDesiredMatchOrExit(config, goTarget)
+        target = GetDesiredMatch(config, goTarget)
+
+    if target is None:
+        return -1
+
     parallelRunner = ParallelRunner(config) if config.Parallel else None
     runMethod = subprocess.run if config.WaitForExit else subprocess.Popen
     stdin = sys.stdin if config.WaitForExit else subprocess.DEVNULL
@@ -2053,6 +2076,8 @@ def Run(config: GoConfig, goTarget: str,
             if config.WaitForExit and runs == 1:
                 return process.returncode
 
+    if config.PrintTarget:
+        print(target)
     if config.DryRun:
         return 0
 
@@ -2083,7 +2108,7 @@ if __name__ == "__main__":
 
     if i == len(sys.argv):
         PrintHelp()
-        exit()
+        exit(0)
 
     if not config.Validate():
         exit(-1)
@@ -2094,7 +2119,11 @@ if __name__ == "__main__":
     target = sys.argv[i]
     targetArguments = config.ProcessApplyArguments(sys.argv[i + 1:])
 
-    result = Run(config, target, targetArguments)
+    if targetArguments is not None:
+        result = Run(config, target, targetArguments)
+    else:
+        result = -1
+
     for modulePath in config.ExternalModules:
         config.ExternalModules[modulePath].Exit()
     exit(result or 0)
