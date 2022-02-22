@@ -1,4 +1,4 @@
-# VERSION 132    REV 22.02.22.02
+# VERSION 133    REV 22.02.23.01
 
 import ctypes
 import difflib
@@ -77,6 +77,7 @@ def PrintHelp():
         return
 
     print("Revision %s    Version Date %s" % get_current_version())
+    print()
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
     print("Run with /help to print this help.")
@@ -85,11 +86,12 @@ def PrintHelp():
     print()
     print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
     print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
-    print("Config files (default: go.config) can be used to specify \"TargetedExtensions\", \"TargetedPaths\" and \"IgnoredPaths\".")
-    print("Config files are json files.")
-    print("Empty go.config example: {\"TargetedExtensions\":[],\"TargetedPaths\":[],\"IgnoredPaths\":[]}\"")
-    print("Added paths are searched/ignored recursively if they specify a directory.")
-    print("Other (optional) config keys:")
+    print()
+    print("Config files (default: go.config) can be used to specify static options in a JSON format.")
+    print("Config keys:")
+    print("  TargetedPaths [list[str]]: additional searched paths; recursive if a directory")
+    print("  TargetedExtensions [list[str]]: additional extensions considered executable")
+    print("  IgnoredPaths [list[str]]: additional ignored paths; recursive if a directory")
     print("  AlwaysYes [bool]: always set /yes.")
     print("  AlwaysQuiet [0-3 or bool]: if bool set /quiet, if int set the level of /quiet")
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
@@ -99,9 +101,11 @@ def PrintHelp():
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
     print("  DefaultArguments [list[str]]: prepend the given arguments before any command line arguments every go run")
-    print("You can also create a \".gofilter\" file listing names with UNIX-like wildcards,")
-    print("  and go will ignore matching files/directories recursively. Prepend + or - to the name to explicitly specify")
-    print("  whether to include or ignore matches.")
+    print()
+    print("By creating a \".gofilter\" file inside a searched directory, listing names with UNIX-like wildcards,")
+    print("  go will ignore matching files/directories recursively.")
+    print("Prepend + or - to the name to explicitly specify whether to include or ignore matches.")
+    print("Filters can include files and directories not directly under the current one.")
     print()
     print("Avaliable go arguments:")
     print("All arguments accept a -- prefix instead of /")
@@ -855,8 +859,8 @@ class Utils():
         if hasAdmin:
             return
 
-        executable = shlex.quote(sys.executable)
-        args = [shlex.quote(x) for x in sys.argv]
+        executable = Utils.EscapeForShell(sys.executable)
+        args = [Utils.EscapeForShell(x) for x in sys.argv]
 
         if Utils.IsWindows():
             ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, " ".join(args), None, 1)
