@@ -1,4 +1,4 @@
-# VERSION 133    REV 22.02.23.01
+# VERSION 134    REV 22.03.04.01
 
 import ctypes
 import difflib
@@ -46,15 +46,17 @@ except:
 
 
 MAX_QUIET_LEVEL = 3
-QUIET_LEVEL = 0
+MAX_VERBOSE_LEVEL = 2
+PRINT_LEVEL = 0
+def change_level(offset: int):
+    global PRINT_LEVEL
+    PRINT_LEVEL -= offset
 def can_print(level: int) -> bool:
-    return level >= QUIET_LEVEL
-
+    return level >= PRINT_LEVEL
 def Cprint(*args, level: int = 0, **kwargs):
     if not can_print(level):
         return
     print(*args, **kwargs)
-
 def Cprint_gen(level: int) -> typing.Callable:
     return lambda *args, **kwargs: Cprint(*args, level=level, **kwargs)
 
@@ -132,10 +134,15 @@ def PrintHelp():
     print("/refresh      : Manually refresh the path cache.")
     print("/nofuzzy      : Disable fuzzy matching, speeding up target search.")
     print("/duplinks     : Include symlinks to executables that were already found.")
+    print("/nofilters    : Ignore .gofilter files.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
     print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is " + str(MAX_QUIET_LEVEL) + " q's.")
+    print("/verbose      : Enables verbose messages.")
+    print("                Repeat the \"v\" to enable more messages (eg. /vverbose). Maximum is " + str(MAX_VERBOSE_LEVEL) + " v's.")
     print("/qmax         : Sets the maximum quiet level.")
+    print("/vmax         : Sets the maximum verbose level.")
+    print()
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
     print("/echo         : Echoes the command to be run, including arguments, before running it.")
     print("/dry          : Does not actually run the target executable.")
@@ -599,7 +606,7 @@ class Utils():
                 matchingPaths.add(abspath)
             else:
                 for (root, dirs, files) in os.walk(targetedPath, topdown=True):
-                    if ".gofilter" in files:
+                    if (not config.IgnoreGofilters) and ".gofilter" in files:
                         files.remove(".gofilter")
                         filter = GoFilter(os.path.join(root, ".gofilter"))
 
@@ -1133,6 +1140,7 @@ class Utils():
 
 class GoConfig:
     _QuietRegex = re.compile("^(q+)uiet$", re.I)
+    _VerboseRegex = re.compile("^(v+)erbose$", re.I)
 
     def __init__(self):
         self.ConfigFile = "go.config"
@@ -1149,6 +1157,7 @@ class GoConfig:
         self.RefreshPathCache = False
         self.FuzzyMatch = True
         self.IgnoreDuplicateLinks = True
+        self.IgnoreGofilters = False
 
         self.RegexTargetMatch = False
         self.WildcardTargetMatch = False
@@ -1156,7 +1165,8 @@ class GoConfig:
         self.NthMatch = None
         self.FirstMatchFromConfig = False
 
-        self.QuietGo = 0
+        self.PrintLevel = PRINT_LEVEL
+
         self.EchoTarget = False
         self.DryRun = False
         self.SuppressPrompts = False
@@ -1183,7 +1193,7 @@ class GoConfig:
         self.RepeatCount = None
         self.CrossJoin = False
 
-        self.ExternalModules = {}
+        self.ExternalModules: typing.Dict[str, ExternalModule] = {}
 
         self.ReloadConfig(False)
 
@@ -1350,6 +1360,9 @@ class GoConfig:
         elif lower == "duplinks":
             self.IgnoreDuplicateLinks = False
             self.DisablePathCache = True
+        elif lower == "nofilters":
+            self.IgnoreGofilters = True
+            self.DisablePathCache = True
 
         elif lower == "regex":
             self.RegexTargetMatch = True
@@ -1373,10 +1386,18 @@ class GoConfig:
             else:
                 count = min(len(m.group(1)), MAX_QUIET_LEVEL)
 
-            global QUIET_LEVEL
-            QUIET_LEVEL += count
-            self.QuietGo += count
+            change_level(count)
+            self.PrintLevel = PRINT_LEVEL
             self.TryParseArgument("/yes")
+        elif (m := GoConfig._VerboseRegex.match(argument)) or lower == "vmax":
+            if m is None:
+                count = MAX_VERBOSE_LEVEL
+            else:
+                count = min(len(m.group(1)), MAX_VERBOSE_LEVEL)
+
+            change_level(-count)
+            self.PrintLevel = PRINT_LEVEL
+
         elif lower == "list":
             self.TryParseArgument("/echo")
             self.TryParseArgument("/dry")
@@ -1888,9 +1909,9 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
 
     scriptDir = Utils.GetScriptDir()
     cachePath = os.path.join(scriptDir, "go.cache")
-    overwriteCache = config.RefreshPathCache
+    overwriteCache = config.RefreshPathCache and not config.DisablePathCache
 
-    if config.UsePathCache and not config.RefreshPathCache:
+    if (config.UsePathCache and not config.DisablePathCache) and not config.RefreshPathCache:
         if os.path.isfile(cachePath):
             with open(cachePath, "rb") as f:
                 (lastRefresh, cachedPaths) = pickle.load(f)
