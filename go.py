@@ -1,4 +1,4 @@
-# VERSION 134    REV 22.03.04.01
+# VERSION 135    REV 22.04.17.01
 
 import ctypes
 import difflib
@@ -103,6 +103,9 @@ def PrintHelp():
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
     print("  DefaultArguments [list[str]]: prepend the given arguments before any command line arguments every go run")
+    print("  UseOldModifierOrder [bool]: set to True to use the old apply argument modifier order")
+    print("                              (ie: modifiers come before the argument)")
+    print("                              this option will be deprecated in the future")
     print()
     print("By creating a \".gofilter\" file inside a searched directory, listing names with UNIX-like wildcards,")
     print("  go will ignore matching files/directories recursively.")
@@ -176,9 +179,8 @@ def PrintHelp():
     print("/crossjoin    : Cross-joins all apply lists, resulting in all possible argument combinations.")
     print("/[type]apply  : For every line in the specified source, runs the target with the line added as arguments.")
     print("                If no inline markers (see below) are specified, all arguments are appended to the end.")
-    print("                A type must always be specified.")
-    print("                Accepts a number of modifiers with +[modifier], before any apply-specific arguments.")
-    print("                Apply-specific arguments must always come last: [apply type](\\+[modifier])*(-[arguments])?")
+    print("                Accepts a number of modifiers with +[modifier], after any apply-specific arguments.")
+    print("                Apply-specific arguments must always come first: [apply type](-[arguments])?(\\+[modifier])*")
     print("                Types of apply:")
     print("                    C:   reads the input text from the clipboard as lines")
     print("                    D:   needs an *-int, duplicates the specified /*apply list, without any of its modifiers")
@@ -251,7 +253,7 @@ def PrintExamples():
     print("    go /iapply-\"3,4\" /iapply-\"1,2\" cmd /c echo %%1%% %%0%%")
     print()
     print("Generate all integers between 0 and 100, and format them as a 0 padded 3 digit number:")
-    print("    go /rapply+[fi:%03d]-1,100 cmd /c echo")
+    print("    go /rapply-1,100+[fi:%03d] cmd /c echo")
     print()
     print("Print last 4 characters of all files in the current directory, read from stdin:")
     print("    dir /b | go /papply+[ss:-4:] cmd /c echo")
@@ -327,7 +329,8 @@ class MatchCacheItem():
 
 class ApplyListSpecifier():
     __ApplyRegex = re.compile("^([cdfghipr]|py)apply(.+)?$", re.I)
-    __ApplyArgumentRegex = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
+    __ApplyArgumentRegex_OLD = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
+    __ApplyArgumentRegex = re.compile(r"(?: \+\[(.+?)\] | -(.+?) ) (?=$|\+\[)", re.I | re.X)
 
     def __init__(self,
                  sourceText: str,
@@ -354,8 +357,10 @@ class ApplyListSpecifier():
         modifiers = []
         applyArgument = None
 
+        regexToUse = ApplyListSpecifier.__ApplyArgumentRegex_OLD if config.UseOldModifierOrder else ApplyListSpecifier.__ApplyArgumentRegex
+
         if argsstr is not None:
-            for match in ApplyListSpecifier.__ApplyArgumentRegex.finditer(argsstr):
+            for match in regexToUse.finditer(argsstr):
                 if match.group(1):
                     modifierText = match.group(1)
                     if modifierText == "e":
@@ -1145,6 +1150,8 @@ class GoConfig:
     def __init__(self):
         self.ConfigFile = "go.config"
 
+        self.UseOldModifierOrder = False
+
         self.TargetedExtensions = Utils.GetDefaultExecutableExtensions()
         self.TargetedPaths = []
         self.IgnoredPaths = []
@@ -1267,6 +1274,8 @@ class GoConfig:
             for arg in args:
                 if not self.TryParseArgument(arg):
                     Cprint(">>>default argument \"%s\" is an invalid go argument; ignoring..." % (arg), level=2)
+        if "UseOldModifierOrder" in config and config.pop("UseOldModifierOrder"):
+            self.UseOldModifierOrder = True
 
         if len(config.keys()) > 0:
             Cprint(">>>config file contains extra keys: " + ", ".join(config.keys()), level=1)
