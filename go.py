@@ -1,4 +1,4 @@
-# VERSION 135    REV 22.04.17.01
+# VERSION 136    REV 22.04.19.01
 
 import ctypes
 import difflib
@@ -9,7 +9,6 @@ import json
 import os
 import pickle
 import queue
-import re
 import subprocess
 import tempfile
 import threading
@@ -22,6 +21,11 @@ import unicodedata
 import urllib.request
 
 # optional requirements:
+
+try:
+    import regex as re
+except:
+    import re
 
 COLORAMA_AVAILABLE = False
 try:
@@ -88,6 +92,8 @@ def PrintHelp():
     print()
     print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
     print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
+    print()
+    print("All regex operations use the more advanced \"regex\" pypi package, if it is installed.")
     print()
     print("Config files (default: go.config) can be used to specify static options in a JSON format.")
     print("Config keys:")
