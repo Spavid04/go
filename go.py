@@ -1,7 +1,8 @@
-# VERSION 137    REV 22.05.16.01
+# VERSION 138    REV 22.05.16.02
 
 import ctypes
 import difflib
+import enum
 import fnmatch
 import importlib.util
 import itertools
@@ -154,6 +155,7 @@ def PrintHelp():
     print()
     print("/yes          : Suppress inputs by answering \"yes\" (or the equivalent).")
     print("/echo         : Echoes the command to be run, including arguments, before running it.")
+    print("                Append -success or -fail to echo the command when the target returns a success or failure error code.")
     print("/dry          : Does not actually run the target executable.")
     print("/list         : Alias for /echo + /dry.")
     print("/target       : Print only the target and exit. Implies /qmax and /dry.")
@@ -1148,6 +1150,10 @@ class Utils():
 
             psutil.Process(pid).nice(newPriority)
 
+class EchoWhenValues(enum.Enum):
+    Always = 0
+    Failure = 1
+    Success = 2
 
 class GoConfig:
     _QuietRegex = re.compile("^(q+)uiet$", re.I)
@@ -1181,6 +1187,7 @@ class GoConfig:
         self.PrintLevel = PRINT_LEVEL
 
         self.EchoTarget = False
+        self.EchoWhen = EchoWhenValues.Always
         self.DryRun = False
         self.SuppressPrompts = False
         self.PrintTarget = False
@@ -1416,8 +1423,15 @@ class GoConfig:
         elif lower == "list":
             self.TryParseArgument("/echo")
             self.TryParseArgument("/dry")
-        elif lower == "echo":
+        elif lower.startswith("echo"):
             self.EchoTarget = True
+            when = lower[5:]
+            if when == "fail":
+                self.EchoWhen = EchoWhenValues.Failure
+            elif when == "success":
+                self.EchoWhen = EchoWhenValues.Success
+            else:
+                self.EchoWhen = EchoWhenValues.Always
         elif lower == "dry":
             self.DryRun = True
         elif lower == "yes":
@@ -2025,6 +2039,12 @@ def GetDesiredMatch(config: GoConfig, target: str) -> str | None:
     return exactMatches[0]
 
 
+def echoTarget(target: str, arguments: typing.List[str], unsafe: bool = False):
+    if unsafe:
+        print(target + " " + " ".join(arguments))
+    else:
+        print(Utils.EscapeForShell(target) + " " + " ".join(Utils.EscapeForShell(x) for x in arguments))
+
 def Run(config: GoConfig, goTarget: str,
         targetArguments: typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]) \
         -> typing.Optional[int]:
@@ -2088,15 +2108,15 @@ def Run(config: GoConfig, goTarget: str,
     else:
         directory = None
 
-    shouldEchoTarget = config.EchoTarget and can_print(1)
-    echoActualTarget = target if not config.AsShellScript else goTarget
+    echoedActualTarget = target if not config.AsShellScript else goTarget
+
+    shouldEchoAlways = config.EchoTarget and config.EchoWhen == EchoWhenValues.Always and can_print(1)
+    shouldEchoSuccess = config.EchoTarget and config.EchoWhen == EchoWhenValues.Success and can_print(2)
+    shouldEchoFail = config.EchoTarget and config.EchoWhen == EchoWhenValues.Failure and can_print(2)
 
     for arguments in (zip(*targetArguments) if len(targetArguments) > 0 else [[]]):
-        if shouldEchoTarget:
-            if config.Unsafe:
-                print(echoActualTarget + " " + " ".join(arguments))
-            else:
-                print(Utils.EscapeForShell(echoActualTarget) + " " + " ".join(Utils.EscapeForShell(x) for x in arguments))
+        if shouldEchoAlways:
+            echoTarget(echoedActualTarget, arguments, config.Unsafe)
         if config.DryRun:
             continue
         if config.AsShellScript:
@@ -2116,8 +2136,12 @@ def Run(config: GoConfig, goTarget: str,
         else:
             with Utils.PriorityModifier(*config.Priority):
                 process = runMethod(**subprocessArgs)
-            if config.WaitForExit and runs == 1:
-                return process.returncode
+            if config.WaitForExit:
+                returnCode = process.returncode
+                if (returnCode == 0 and shouldEchoSuccess) or (returnCode != 0 and shouldEchoFail):
+                    echoTarget(echoedActualTarget, arguments, config.Unsafe)
+                if runs == 1:
+                    return returnCode
 
     if config.PrintTarget:
         print(target)
