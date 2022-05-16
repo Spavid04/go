@@ -1,4 +1,4 @@
-# VERSION 136    REV 22.04.19.01
+# VERSION 137    REV 22.05.16.01
 
 import ctypes
 import difflib
@@ -54,7 +54,7 @@ MAX_VERBOSE_LEVEL = 2
 PRINT_LEVEL = 0
 def change_level(offset: int):
     global PRINT_LEVEL
-    PRINT_LEVEL -= offset
+    PRINT_LEVEL = offset
 def can_print(level: int) -> bool:
     return level >= PRINT_LEVEL
 def Cprint(*args, level: int = 0, **kwargs):
