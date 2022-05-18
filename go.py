@@ -1,4 +1,4 @@
-# VERSION 139    REV 22.05.18.01
+# VERSION 140    REV 22.05.18.02
 
 import ctypes
 import difflib
@@ -113,6 +113,9 @@ def PrintHelp():
     print("  UseOldModifierOrder [bool]: set to True to use the old apply argument modifier order")
     print("                              (ie: modifiers come before the argument)")
     print("                              this option will be deprecated in the future")
+    print()
+    print("Environment variables:")
+    print("  GO_DEFAULT_ARGUMENTS [str] : a shell-separated list of arguments to prepend to every go instance")
     print()
     print("By creating a \".gofilter\" file inside a searched directory, listing names with UNIX-like wildcards,")
     print("  go will ignore matching files/directories recursively.")
@@ -2174,14 +2177,18 @@ if __name__ == "__main__":
         exit(0)
 
     config = GoConfig()
+    args = list(sys.argv)
+
+    if (defaultArgs := os.getenv("GO_DEFAULT_ARGUMENTS")):
+        args = [args[0], *shlex.split(defaultArgs), *args[1:]]
 
     i = 1
-    while i < len(sys.argv):
-        if not config.TryParseArgument(sys.argv[i]):
+    while i < len(args):
+        if not config.TryParseArgument(args[i]):
             break
         i += 1
 
-    if i == len(sys.argv):
+    if i == len(args):
         PrintHelp()
         exit(0)
 
@@ -2191,8 +2198,8 @@ if __name__ == "__main__":
     if config.WaitFor:
         Utils.WaitForProcesses(config.WaitFor)
 
-    target = sys.argv[i]
-    targetArguments = config.ProcessApplyArguments(sys.argv[i + 1:])
+    target = args[i]
+    targetArguments = config.ProcessApplyArguments(args[i + 1:])
 
     if targetArguments is not None:
         result = Run(config, target, targetArguments)
