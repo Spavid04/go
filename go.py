@@ -1,4 +1,4 @@
-# VERSION 138    REV 22.05.16.02
+# VERSION 139    REV 22.05.18.01
 
 import ctypes
 import difflib
@@ -233,6 +233,8 @@ def PrintHelp():
     print("                    Specifying a numeric index, including negatives, will use that specific apply list.")
     print("                    Specifying an apply argument (eg. %%fapply-files.txt%% will create a new apply list and use it.")
     print("                        The i modifier cannot be used in this case")
+    print("                    \"Escaping\" or indenting an inline marker (eg. when running nested go's) is done with prepending")
+    print("                        a number of '#' before the marker, similar to indented code.")
 
 
 def PrintExamples():
@@ -431,7 +433,7 @@ class ApplyListSpecifier():
 
 
 class InlineMarkerSpecifier():
-    __InlineMarkerRegex = re.compile(r"(?:%%|\$\$)(-?\d+|.+?)??(?:%%|\$\$)", re.I)
+    __InlineMarkerRegex = re.compile(r"(\#*)(%%|\$\$)(-?\d+|.+?)??(%%|\$\$)", re.I)
 
     def __init__(self, index: typing.Optional[int]):
         self.Index = index
@@ -449,18 +451,24 @@ class InlineMarkerSpecifier():
         i = 1
         n = len(split)
         while i < n:
-            if split[i] is None or len(split[i]) == 0:
+            indentStr = split[i]
+            (mkStart, content, mkEnd) = split[i + 1:i + 4]
+            suffix = split[i + 4]
+            i += 5
+
+            if indentStr:
+                piece = indentStr[1:] + mkStart + (content or "") + mkEnd
+            elif not content:
                 piece = InlineMarkerSpecifier(None)
-            elif (intValue := Utils.TryParseInt(split[i])) is not None:
+            elif (intValue := Utils.TryParseInt(content)) is not None:
                 piece = InlineMarkerSpecifier(intValue)
-            elif (specifier := ApplyListSpecifier.TryParse(split[i])) is not None:
+            elif (specifier := ApplyListSpecifier.TryParse(content)) is not None:
                 piece = specifier
             else:
-                piece = split[i]
+                piece = content
 
             toReturn.append(piece)
-            toReturn.append(split[i + 1])
-            i += 2
+            toReturn.append(suffix)
 
         return toReturn
 
