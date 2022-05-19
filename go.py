@@ -1,4 +1,4 @@
-# VERSION 140    REV 22.05.18.02
+# VERSION 141    REV 22.05.25.01
 
 import ctypes
 import difflib
@@ -208,7 +208,6 @@ def PrintHelp():
     print("                    f:fmt    format the string using a standard printf format")
     print("                    fi/f:fmt same as f:fmt modifier, but treats input as ints or floats")
     print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
-    print("                             if none, the argument list gets flattened to multiple arguments, and should be last")
     print("                    g:args   run go with the specified arguments to process the incoming list and return a new one")
     print("                             the sub-go will receive its arguments with via stdin, so /papply should be used")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
@@ -224,6 +223,7 @@ def PrintHelp():
     print("                    sp:pat   split all agruments into more arguments, separated by the given pat regex pattern")
     print("                             excludes blank parts")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
+    print("                    tsp      transpose an argument list to multiple chained arguments; this modifier must come last")
     print("                    w:pat    retains only arguments that match the specified wildcard pattern; use w-:pat to invert")
     print("                    xtr:pat  extracts the specified regex match from all arguments, and then flattens the result")
     print("                             returns group 1 (else the first match), or allows a group number like rs:rgx")
@@ -358,6 +358,10 @@ class ApplyListSpecifier():
         self.List = None
         self.Used = False
 
+    @property
+    def ShouldTranspose(self) -> bool:
+        return any(x == "tsp" for (x, _) in self.Modifiers)
+
     @staticmethod
     def TryParse(text: str) -> typing.Optional["ApplyListSpecifier"]:
         m = ApplyListSpecifier.__ApplyRegex.match(text)
@@ -380,8 +384,8 @@ class ApplyListSpecifier():
                         modifiers.append(("e", None))
                     elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
                         modifiers.append((m.group(1), m.group(2)))
-                    elif m := re.match("fl(:(.+)?)?", modifierText, re.I):
-                        separator = (m.group(2) or "") if m.group(1) else None
+                    elif m := re.match("fl:(.+)?", modifierText, re.I):
+                        separator = m.group(1) or ""
                         modifiers.append(("fl", separator))
                     elif m := re.match("g:(.+)", modifierText, re.I):
                         modifiers.append(("g", m.group(1)))
@@ -417,6 +421,8 @@ class ApplyListSpecifier():
                         modifiers.append(("sp", m.group(1)))
                     elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
                         modifiers.append(("ss", m.group(1)))
+                    elif "tsp" == modifierText.lower():
+                        modifiers.append(("tsp", None))
                     elif m := re.match("w(-)?:(.+)", modifierText, re.I):
                         inverted = bool(m.group(1))
                         pattern = m.group(2)
@@ -442,6 +448,10 @@ class InlineMarkerSpecifier():
         self.Index = index
 
         self.ApplyList : typing.Optional[ApplyListSpecifier] = None
+
+    @property
+    def ShouldTranspose(self) -> bool:
+        return self.ApplyList.ShouldTranspose
 
     @staticmethod
     def TryParseMarkers(text: str) \
@@ -894,7 +904,7 @@ class Utils():
         args = [Utils.EscapeForShell(x) for x in sys.argv]
 
         if Utils.IsWindows():
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, " ".join(args), None, 1)
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, Utils.JoinForShell(args, False), None, 1)
         else:
             subprocess.Popen(["sudo", executable, *args])
         exit(0)
@@ -906,13 +916,14 @@ class Utils():
             yield list[i:min(i + batchSize, length)]
 
     @staticmethod
-    def CreateScriptFile(list: typing.List[typing.List[str]], echoOff: bool) -> str:
+    def CreateScriptFile(items: typing.List[typing.List[str]], echoOff: bool, unsafe: bool = False) -> str:
         if Utils.IsWindows():
             echo = "@echo off"
             suffix = ".bat"
             selfDelete = "(goto) 2>nul & del \"%~f0\""
         else:
-            echo = "set echo off" #does this even work
+            # does this even work?
+            echo = "set echo off"
             suffix = ".sh"
             selfDelete = "rm -- \"$0\""
 
@@ -921,8 +932,8 @@ class Utils():
                 f.write(echo)
                 f.write("\n")
 
-            for r in list:
-                f.write(" ".join(r))
+            for r in items:
+                f.write(Utils.JoinForShell(r, not unsafe))
                 f.write("\n")
 
             f.write(selfDelete)
@@ -933,23 +944,34 @@ class Utils():
         os.chmod(script, 0o755)
         return script
 
+    __Escape_Windows_Chars = "()%!^\"<>&|"
+    __Escape_Windows_Re = re.compile("(" + "|".join(re.escape(char) for char in list(__Escape_Windows_Chars)) + ")")
+    __Escape_Windows_Map = {char: "^%s" % char for char in __Escape_Windows_Chars}
     @staticmethod
     def EscapeForShell(text: str) -> str:
         if Utils.IsWindows():
             if not text or re.search(r"([\"\s])", text):
                 text = "\"" + text.replace("\"", r"\"") + "\""
 
-            meta_chars = "()%!^\"<>&|"
-            meta_re = re.compile("(" + "|".join(re.escape(char) for char in list(meta_chars)) + ")")
-            meta_map = {char: "^%s" % char for char in meta_chars}
-
             def escape_meta_chars(m):
                 char = m.group(1)
-                return meta_map[char]
+                return Utils.__Escape_Windows_Map[char]
 
-            return meta_re.sub(escape_meta_chars, text)
+            return Utils.__Escape_Windows_Re.sub(escape_meta_chars, text)
         else:
             return shlex.quote(text)
+
+    @staticmethod
+    def JoinForShell(args: typing.Iterable[str], escape: bool = True) -> str:
+        if escape:
+            processed = (Utils.EscapeForShell(x) for x in args)
+        else:
+            processed = args
+
+        if Utils.IsWindows():
+            return " ".join(processed)
+        else:
+            return shlex.join(processed)
 
     @staticmethod
     def WaitForProcesses(pids: typing.List[int]):
@@ -1043,11 +1065,28 @@ class Utils():
             return None
 
     @staticmethod
-    def ResolveSpecifier(item: typing.Union[InlineMarkerSpecifier, ApplyListSpecifier]) -> typing.List[str]:
-        if isinstance(item, InlineMarkerSpecifier):
-            return item.ApplyList.List
-        elif isinstance(item, ApplyListSpecifier):
-            return item.List
+    def InsertMany(into: list, at: int, what: typing.Iterable):
+        for item in what:
+            into.insert(at, item)
+            at += 1
+
+    @staticmethod
+    def CompactStrings(items: typing.List[typing.Union[str, typing.Any]]) -> typing.List[typing.Union[str, typing.Any]]:
+        result = list()
+        accumulator = list()
+
+        for item in items:
+            if isinstance(item, str):
+                accumulator.append(item)
+            else:
+                if len(accumulator) > 0:
+                    result.append("".join(accumulator))
+                    accumulator.clear()
+                result.append(item)
+        if len(accumulator) > 0:
+            result.append("".join(accumulator))
+
+        return result
 
     class RepeatGenerator():
         def __init__(self, item, count: int):
@@ -1550,7 +1589,7 @@ class GoConfig:
             return module
 
     def ProcessApplyArguments(self, targetArguments: typing.List[str]) \
-            -> typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]] | None:
+            -> typing.Optional[typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]]:
         newArguments = []
 
         # region preprocess inline markers and apply list usage
@@ -1566,9 +1605,11 @@ class GoConfig:
                     newArguments.append(argument)
                     continue
 
+                notEmpty = list()
                 for item in markers:
                     if isinstance(item, str):
-                        pass
+                        if len(item) > 0:
+                            notEmpty.append(item)
                     elif isinstance(item, InlineMarkerSpecifier):
                         if item.Index is None:
                             item.applyList = None
@@ -1576,6 +1617,8 @@ class GoConfig:
                         else:
                             item.ApplyList = self.ApplyLists[item.Index]
                             item.ApplyList.Used = True
+
+                        notEmpty.append(item)
                     else:
                         item.Modifiers = [x for x in item.Modifiers if x[0] != "i"]
                         self.ApplyLists.append(item)
@@ -1583,7 +1626,9 @@ class GoConfig:
                         marker.ApplyList = item
                         item.Used = True
 
-                newArguments.append(markers)
+                        notEmpty.append(item)
+
+                newArguments.append(notEmpty[0] if len(notEmpty) == 1 else notEmpty)
 
         unusedListQueue = queue.SimpleQueue()
         for i in range(len(self.ApplyLists)):
@@ -1625,7 +1670,7 @@ class GoConfig:
 
         if len(self.ApplyLists) == 0:
             repeat = 1 if self.RepeatCount is None else self.RepeatCount
-            return [[x] * repeat for x in targetArguments]
+            return [Utils.RepeatGenerator(x, repeat) for x in targetArguments]
 
         # region generate lists
 
@@ -1685,10 +1730,7 @@ class GoConfig:
                     for i in range(len(applyArgument.List)):
                         applyArgument.List[i] = modifierArgument % convertFunc(applyArgument.List[i])
                 elif modifierType == "fl":
-                    if modifierArgument is not None:
-                        applyArgument.List = [modifierArgument.join(applyArgument.List)]
-                    else:
-                        applyArgument.List = [applyArgument.List]
+                    applyArgument.List = [modifierArgument.join(applyArgument.List)]
                 elif modifierType == "g":
                     applyArgument.List = Utils.CaptureGoOutput(modifierArgument, applyArgument.List)
                 elif modifierType == "py":
@@ -1728,6 +1770,8 @@ class GoConfig:
                 elif modifierType == "ss":
                     s = Utils.GetSliceFunc(modifierArgument)
                     applyArgument.List = [s(x) for x in applyArgument.List]
+                elif modifierType == "tsp":
+                    applyArgument.List = [applyArgument.List]
                 elif modifierType == "w":
                     (inverted, pattern) = modifierArgument
                     applyArgument.List = [x for x in applyArgument.List if fnmatch.fnmatch(x, pattern) is not inverted] # big brain inversion (== xor (== is not))
@@ -1741,10 +1785,14 @@ class GoConfig:
 
         # endregion
 
-        # region adjust lengths
+        # region calculate and adjust lengths
+
+        # todo transposed lists behave unexpectedly
 
         if self.RepeatCount is not None and self.RepeatCount >= 2:
             for applyArgument in self.ApplyLists:
+                if applyArgument.ShouldTranspose:
+                    continue
                 originalLength = len(applyArgument.List)
 
                 for i in range(self.RepeatCount - 1):
@@ -1754,6 +1802,8 @@ class GoConfig:
             maxOriginalLength = max(len(x.List) for x in self.ApplyLists)
 
             for applyArgument in self.ApplyLists:
+                if applyArgument.ShouldTranspose:
+                    continue
                 originalLength = len(applyArgument.List)
 
                 if self.RolloverZero:
@@ -1769,7 +1819,10 @@ class GoConfig:
             for i in range(len(self.ApplyLists)):
                 self.ApplyLists[i].List = crossjoined[i]
 
-        minLength = min(len(x.List) for x in self.ApplyLists)
+        try:
+            minLength = min(len(x.List) for x in self.ApplyLists if not x.ShouldTranspose)
+        except:
+            minLength = self.RepeatCount or 1
 
         for applyArgument in self.ApplyLists:
             if len(applyArgument.List) > minLength:
@@ -1779,30 +1832,64 @@ class GoConfig:
 
         # region expand and flatten/transpose lists
 
-        applyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
+        finalApplyLength = 1 if len(self.ApplyLists) == 0 else len(self.ApplyLists[0].List)
 
-        for i in range(len(newArguments)):
+        def resolveSpecifier(item: typing.Union[InlineMarkerSpecifier, ApplyListSpecifier]) -> typing.List[str]:
+            if isinstance(item, InlineMarkerSpecifier):
+                return item.ApplyList.List
+            elif isinstance(item, ApplyListSpecifier):
+                return item.List
+
+        def simplifyList(arguments: list) -> list:
+            relevantArguments = list()
+            for item in arguments:
+                if isinstance(item, str):
+                    if len(item) > 0:
+                        relevantArguments.append(item)
+                else:
+                    relevantArguments.append(item)
+            return relevantArguments
+
+        # todo: this shit to semi-recursive (but still shit)
+        i = 0
+        while i < len(newArguments):
             argument = newArguments[i]
 
-            if isinstance(argument, list):
-                result = []
-                temp = []
+            if isinstance(argument, str):
+                result = Utils.RepeatGenerator(argument, finalApplyLength)
+            elif isinstance(argument, InlineMarkerSpecifier) or isinstance(argument, ApplyListSpecifier):
+                result = resolveSpecifier(argument)
 
-                for item in argument:
-                    if isinstance(item, str):
-                        if len(item) > 0:
-                            temp.append(Utils.RepeatGenerator(item, applyLength))
-                    else:
-                        temp.append(Utils.ResolveSpecifier(item))
-
-                for transposed in zip(*temp):
-                    result.append("".join(transposed))
-            elif isinstance(argument, str):
-                result = Utils.RepeatGenerator(argument, applyLength)
+                if argument.ShouldTranspose:
+                    del newArguments[i]
+                    Utils.InsertMany(newArguments, i, (Utils.RepeatGenerator(x, finalApplyLength) for x in result[0]))
+                    i += len(result[0])
+                    continue
             else:
-                result = Utils.ResolveSpecifier(argument)
+                argument = simplifyList(argument)
+
+                j = 0
+                while j < len(argument):
+                    arg = argument[j]
+
+                    if isinstance(arg, str):
+                        pass
+                    else:
+                        args = resolveSpecifier(arg)
+
+                        if arg.ShouldTranspose:
+                            argument[j] = Utils.JoinForShell(args[0], False)
+                        else:
+                            argument[j] = args
+                    j += 1
+
+                argument = (Utils.RepeatGenerator(x, finalApplyLength) if isinstance(x, str) else x for x in argument)
+                result = list()
+                for rejoined in zip(*argument):
+                    result.append("".join(rejoined))
 
             newArguments[i] = result
+            i += 1
 
         # endregion
 
@@ -2051,10 +2138,7 @@ def GetDesiredMatch(config: GoConfig, target: str) -> str | None:
 
 
 def echoTarget(target: str, arguments: typing.List[str], unsafe: bool = False):
-    if unsafe:
-        print(target + " " + " ".join(arguments))
-    else:
-        print(Utils.EscapeForShell(target) + " " + " ".join(Utils.EscapeForShell(x) for x in arguments))
+    print(Utils.JoinForShell([target, *arguments], not unsafe))
 
 def Run(config: GoConfig, goTarget: str,
         targetArguments: typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]) \
@@ -2134,10 +2218,9 @@ def Run(config: GoConfig, goTarget: str,
             asscriptArguments.append([goTarget] + list(arguments))
             continue
 
+        runArgument = [target, *arguments]
         if config.Unsafe:
-            runArgument = target + " " + " ".join(arguments)
-        else:
-            runArgument = [target] + list(arguments)
+            runArgument = Utils.JoinForShell(runArgument, False)
 
         subprocessArgs = {"args": runArgument, "shell": config.Shell, "cwd": directory, "creationflags": flags,
                           "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
@@ -2162,7 +2245,7 @@ def Run(config: GoConfig, goTarget: str,
     if config.Parallel:
         parallelRunner.Start()
     if config.AsShellScript:
-        tempscriptPath = Utils.CreateScriptFile(asscriptArguments, config.EchoOff)
+        tempscriptPath = Utils.CreateScriptFile(asscriptArguments, config.EchoOff, config.Unsafe)
         subprocessArgs = {"args": [tempscriptPath], "shell": True, "cwd": directory, "creationflags": flags,
                           "stdin": stdin, "stdout": stdout, "stderr": stderr, "start_new_session": not config.WaitForExit}
         with Utils.PriorityModifier(*config.Priority):
