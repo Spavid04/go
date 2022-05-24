@@ -1,4 +1,4 @@
-# VERSION 142    REV 22.05.25.02
+# VERSION 143    REV 22.05.25.03
 
 import ctypes
 import difflib
@@ -339,6 +339,14 @@ class MatchCacheItem():
         self.filename = filename
         self.linkTarget : typing.Optional[str] = None
 
+class MatchCache():
+    def __init__(self, timestamp: float, paths: typing.List[MatchCacheItem]):
+        self.version = get_current_version()
+        self.timestamp = timestamp
+        self.paths = paths
+
+    def GoodVersion(self) -> bool:
+        return self.version == get_current_version()
 
 class ApplyListSpecifier():
     __ApplyRegex = re.compile("^([cdfghipr]|py)apply(.+)?$", re.I)
@@ -1340,6 +1348,8 @@ class GoConfig:
         if "UseOldModifierOrder" in config and config.pop("UseOldModifierOrder"):
             self.UseOldModifierOrder = True
 
+        self.DisablePathCache = False
+
         if len(config.keys()) > 0:
             Cprint(">>>config file contains extra keys: " + ", ".join(config.keys()), level=1)
 
@@ -2040,14 +2050,24 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
 
     if (config.UsePathCache and not config.DisablePathCache) and not config.RefreshPathCache:
         if os.path.isfile(cachePath):
-            with open(cachePath, "rb") as f:
-                (lastRefresh, cachedPaths) = pickle.load(f)
-
-            if lastRefresh < (time.time() - int(config.CacheInvalidationTime * 3600)):
+            success = False
+            try:
+                with open(cachePath, "rb") as f:
+                    matchCache = pickle.load(f)
+                    assert isinstance(matchCache, MatchCache) and matchCache.GoodVersion()
+                    success = True
+            except:
                 overwriteCache = True
-            else:
-                if not config.RefreshPathCache:
-                    allFiles.extend(cachedPaths)
+
+            if success:
+                lastRefresh = matchCache.timestamp
+                cachedPaths = matchCache.paths
+
+                if lastRefresh < (time.time() - config.CacheInvalidationTime * 3600):
+                    overwriteCache = True
+                else:
+                    if not config.RefreshPathCache:
+                        allFiles.extend(cachedPaths)
         else:
             overwriteCache = True
 
@@ -2066,7 +2086,8 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
 
     if overwriteCache:
         with open(cachePath, "wb") as f:
-            pickle.dump((time.time(), allFiles), f)
+            matchCache = MatchCache(time.time(), allFiles)
+            pickle.dump(matchCache, f)
 
     similarities = []
     for item in allFiles:
