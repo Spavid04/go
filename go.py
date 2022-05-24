@@ -1,4 +1,4 @@
-# VERSION 141    REV 22.05.25.01
+# VERSION 142    REV 22.05.25.02
 
 import ctypes
 import difflib
@@ -1705,7 +1705,7 @@ class GoConfig:
                 if rangeArgumentsRegex.match(applyArgument.Source):
                     applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
 
-            if not applyArgument.List:
+            if applyArgument.SourceType != "d" and not applyArgument.List:
                 Cprint(">>>apply list index %d is empty! exiting with failure... (%s)" % (i, applyArgument.SourceText), level=3)
                 return None
 
