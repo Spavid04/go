@@ -1,4 +1,4 @@
-# VERSION 143    REV 22.05.25.03
+# VERSION 144    REV 22.07.21.01
 
 import ctypes
 import difflib
@@ -206,12 +206,12 @@ def PrintHelp():
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
     print("                    f:fmt    format the string using a standard printf format")
-    print("                    fi/f:fmt same as f:fmt modifier, but treats input as ints or floats")
+    print("                    fi/f:fmt  same as f:fmt modifier, but treats input as ints or floats")
     print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
     print("                    g:args   run go with the specified arguments to process the incoming list and return a new one")
     print("                             the sub-go will receive its arguments with via stdin, so /papply should be used")
     print("                    i:x      inserts the argument in the command at the specified 0-based index")
-    print("                    py:path[,arg] uses the specified py script to modify an apply list; see go /modulehelp")
+    print("                    py:path[,arg]  uses the specified py script to modify an apply list; see go /modulehelp")
     print("                    rep:x:y  replaces the string x in the input with the string y")
     print("                    rm:rgx   filters out arguments that don't match (anywhere) the specified regex")
     print("                    rs:rgx   returns group 1 (else the first match) using the specified regex, for every argument")
@@ -223,6 +223,9 @@ def PrintHelp():
     print("                    sp:pat   split all agruments into more arguments, separated by the given pat regex pattern")
     print("                             excludes blank parts")
     print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
+    print("                    [lr-]strip[:x]  strips whitespace characters from the ends of the argument")
+    print("                             prepend \"l\" or \"r\" to strip to trim only that side of the argument")
+    print("                             append a :string to strip to trim only those specific characters")
     print("                    tsp      transpose an argument list to multiple chained arguments; this modifier must come last")
     print("                    w:pat    retains only arguments that match the specified wildcard pattern; use w-:pat to invert")
     print("                    xtr:pat  extracts the specified regex match from all arguments, and then flattens the result")
@@ -429,6 +432,10 @@ class ApplyListSpecifier():
                         modifiers.append(("sp", m.group(1)))
                     elif m := re.match("ss:([\\d:,-]+)", modifierText, re.I):
                         modifiers.append(("ss", m.group(1)))
+                    elif m := re.match("([lr])?strip(?::(.+))?", modifierText, re.I):
+                        side = m.group(1)
+                        characters = m.group(2)
+                        modifiers.append(("strip", (side, characters)))
                     elif "tsp" == modifierText.lower():
                         modifiers.append(("tsp", None))
                     elif m := re.match("w(-)?:(.+)", modifierText, re.I):
@@ -1780,6 +1787,16 @@ class GoConfig:
                 elif modifierType == "ss":
                     s = Utils.GetSliceFunc(modifierArgument)
                     applyArgument.List = [s(x) for x in applyArgument.List]
+                elif modifierType == "strip":
+                    side, characters = modifierArgument
+                    side = (side or "").lower()
+                    if side == "l":
+                        stripper = str.lstrip
+                    elif side == "r":
+                        stripper = str.rstrip
+                    else:
+                        stripper = str.strip
+                    applyArgument.List = [stripper(x, characters) for x in applyArgument.List]
                 elif modifierType == "tsp":
                     applyArgument.List = [applyArgument.List]
                 elif modifierType == "w":
