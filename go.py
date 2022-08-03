@@ -1,4 +1,4 @@
-# VERSION 145    REV 22.08.04.01
+# VERSION 145    REV 22.08.04.02
 
 import ctypes
 import difflib
@@ -44,10 +44,13 @@ except:
 
 PSUTIL_AVAILABLE = False
 try:
+    sys.stderr = open(os.devnull, "w")
     import psutil
     PSUTIL_AVAILABLE = True
 except:
     pass
+finally:
+    sys.stderr = sys.__stderr__
 
 PYPERCLIP_AVAILABLE = False
 try:
