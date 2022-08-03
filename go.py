@@ -1,4 +1,4 @@
-# VERSION 144    REV 22.07.21.01
+# VERSION 145    REV 22.08.04.01
 
 import ctypes
 import difflib
@@ -32,6 +32,13 @@ COLORAMA_AVAILABLE = False
 try:
     import colorama
     COLORAMA_AVAILABLE = True
+except:
+    pass
+
+ILOCK_AVAILABLE = False
+try:
+    import ilock
+    ILOCK_AVAILABLE = True
 except:
     pass
 
@@ -170,6 +177,8 @@ def PrintHelp():
     print("/detach       : Detaches child processes, but can create unwanted windows. Usually used with /fork.")
     print("/waitfor-XX   : Delays execution until after the specified process (PID) has stopped running. Can be repeated.")
     print("                Requires the \"psutil\" python module.")
+    print("/waitforqueue : Waits for all other (if any) go instances that use this option.")
+    print("                Requires the \"ilock\" and \"psutil\" pip modules.")
     print("/priority[+=-]XX : Change the target process' priority. + and - change the value relative to the current")
     print("                       process' priority, while = sets it directly.")
     print("                   XX is an integer in the range: [-2, 3] on Windows, [-20, 20] otherwise.")
@@ -988,25 +997,105 @@ class Utils():
         else:
             return shlex.join(processed)
 
-    @staticmethod
-    def WaitForProcesses(pids: typing.List[int]):
-        if not PSUTIL_AVAILABLE:
-            Cprint(">>>psutil module not found; /waitfor will not work!", level=2)
-            return
+    class ProcessWaiter():
+        __PIDS_FILE = os.path.join(tempfile.gettempdir(), "go.waitqueue")
+        __ILOCK_NAME = "go-waitqueue"
 
-        exited = [False]*len(pids)
-        Cprint("Waiting for: " + ", ".join(str(x) for x in pids))
+        def __init__(self):
+            self.test = 0
+            self._pids: typing.List[int] = []
+            self._useQueueing = False
 
-        while not all(exited):
-            for i in range(len(pids)):
-                if exited[i]:
-                    continue
+        @staticmethod
+        def FromPids(pids: typing.List[int]) -> "Utils.ProcessWaiter":
+            if not PSUTIL_AVAILABLE:
+                Cprint(">>>psutil module not found!", level=2)
+                raise ModuleNotFoundError("psutil")
 
-                exists = psutil.pid_exists(pids[i])
-                if not exists:
-                    exited[i] = True
-                    Cprint(str(pids[i]) + " exited")
-            time.sleep(0.1)
+            pw = Utils.ProcessWaiter()
+            pw._pids = list(pids)
+            return pw
+
+        @staticmethod
+        def _GetFilePids() -> typing.List[int]:
+            try:
+                with open(Utils.ProcessWaiter.__PIDS_FILE, "r", newline="") as f:
+                    return [int(x) for x in f.read().splitlines()]
+            except:
+                return []
+
+        @staticmethod
+        def _SetFilePids(pids: typing.List[int]):
+            try:
+                with open(Utils.ProcessWaiter.__PIDS_FILE, "w", newline="") as f:
+                    f.write(os.linesep.join(str(x) for x in pids))
+            except:
+                pass
+
+        @staticmethod
+        def FromQueue() -> "Utils.ProcessWaiter":
+            if not ILOCK_AVAILABLE or not PSUTIL_AVAILABLE:
+                Cprint(">>>ilock or psutil modules not found!", level=2)
+                raise ModuleNotFoundError("ilock or psutil")
+
+            pw = Utils.ProcessWaiter()
+            pw._useQueueing = True
+            return pw
+
+        @staticmethod
+        def WaitForPids(pids: typing.List[int]):
+            if not pids:
+                return
+            if not PSUTIL_AVAILABLE:
+                Cprint(">>>psutil module not found!", level=2)
+                raise ModuleNotFoundError("psutil")
+
+            Cprint("Waiting for: " + ", ".join(str(x) for x in pids))
+
+            exited = [False] * len(pids)
+            while not all(exited):
+                for i in range(len(pids)):
+                    if exited[i]:
+                        continue
+
+                    exists = psutil.pid_exists(pids[i])
+                    if not exists:
+                        exited[i] = True
+                        Cprint(str(pids[i]) + " exited")
+                time.sleep(0.1)
+
+        def __add__(self, other: "Utils.ProcessWaiter") -> "Utils.ProcessWaiter":
+            if other is None:
+                return self
+            if not isinstance(other, Utils.ProcessWaiter):
+                raise Exception("Cannot add ProcessWriter with something else!")
+
+            pw = Utils.ProcessWaiter()
+            pw._pids = self._pids + other._pids
+            pw._useQueueing = self._useQueueing or other._useQueueing
+            return pw
+
+        def __enter__(self):
+            pids = []
+
+            if self._useQueueing:
+                with ilock.ILock(Utils.ProcessWaiter.__ILOCK_NAME):
+                    pids = [x for x in Utils.ProcessWaiter._GetFilePids() if psutil.pid_exists(x)]
+                    self._pids = [*pids, os.getpid()]
+                    Utils.ProcessWaiter._SetFilePids(self._pids)
+            else:
+                pids = self._pids
+
+            Utils.ProcessWaiter.WaitForPids(pids)
+            return self
+
+        def __exit__(self, _, __, ___):
+            if self._useQueueing:
+                with ilock.ILock(Utils.ProcessWaiter.__ILOCK_NAME):
+                    currentPid = os.getpid()
+                    pids = [x for x in Utils.ProcessWaiter._GetFilePids()
+                            if (x != currentPid) and psutil.pid_exists(x)]
+                    Utils.ProcessWaiter._SetFilePids(pids)
 
     @staticmethod
     def GetTextFromUrl(url: str) -> str:
@@ -1262,6 +1351,7 @@ class GoConfig:
         self.WaitForExit = True
         self.Detach = False
         self.WaitFor: typing.List[int] = []
+        self.WaitForQueue = False
         self.Priority: typing.Tuple[int, bool] = (0, True)
         self.Parallel = False
         self.Batched = False
@@ -1521,6 +1611,8 @@ class GoConfig:
             self.Detach = True
         elif lower.startswith("waitfor-"):
             self.WaitFor.append(int(lower[8:]))
+        elif lower == "waitforqueue":
+            self.WaitForQueue = True
         elif lower.startswith("priority"):
             value = int(lower[9:])
             if lower[8] == "-":
@@ -2316,14 +2408,18 @@ if __name__ == "__main__":
     if not config.Validate():
         exit(-1)
 
+    processWaiter = Utils.ProcessWaiter()
+    if config.WaitForQueue:
+        processWaiter += Utils.ProcessWaiter.FromQueue()
     if config.WaitFor:
-        Utils.WaitForProcesses(config.WaitFor)
+        processWaiter += Utils.ProcessWaiter.FromPids(config.WaitFor)
 
     target = args[i]
     targetArguments = config.ProcessApplyArguments(args[i + 1:])
 
     if targetArguments is not None:
-        result = Run(config, target, targetArguments)
+        with processWaiter:
+            result = Run(config, target, targetArguments)
     else:
         result = -1
 

@@ -1,4 +1,5 @@
 colorama
+ilock
 regex
 psutil
 pyperclip
