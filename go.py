@@ -1,4 +1,4 @@
-# VERSION 146    REV 22.11.15.01
+# VERSION 147    REV 22.11.15.02
 
 import ctypes
 import difflib
@@ -251,6 +251,7 @@ def PrintHelp():
     print("                    Specifying a numeric index, including negatives, will use that specific apply list.")
     print("                    Specifying an apply argument (eg. %%fapply-files.txt%% will create a new apply list and use it.")
     print("                        The i modifier cannot be used in this case")
+    print("                    Specifying a numeric index and any modifiers will create a \"dapply\" marker with the same arguments.")
     print("                    \"Escaping\" or indenting an inline marker (eg. when running nested go's) is done with prepending")
     print("                        a number of '#' before the marker, similar to indented code.")
 
@@ -364,7 +365,7 @@ class MatchCache():
         return self.version == get_current_version()
 
 class ApplyListSpecifier():
-    __ApplyRegex = re.compile("^([cdfghipr]|py)apply(.+)?$", re.I)
+    __ApplyRegex = re.compile(r"^(?:([cdfghipr]|py)apply|(-?\d+))(.+)?$", re.I)
     __ApplyArgumentRegex_OLD = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
     __ApplyArgumentRegex = re.compile(r"(?: \+\[(.+?)\] | -(.+?) ) (?=$|\+\[)", re.I | re.X)
 
@@ -392,8 +393,13 @@ class ApplyListSpecifier():
             return None
 
         groups = m.groups()
-        type = groups[0]
-        argsstr = groups[1]
+        if groups[1] is None:
+            type = groups[0]
+            argsstr = groups[2]
+        else:
+            # %%number+modifiers%% becomes %%dapply-number+modifiers
+            type = "d"
+            argsstr = "-" + groups[1] + groups[2]
         modifiers = []
         applyArgument = None
 
@@ -484,7 +490,7 @@ class InlineMarkerSpecifier():
     def TryParseMarkers(text: str) \
             -> typing.Optional[typing.List[typing.Union[str, "InlineMarkerSpecifier", ApplyListSpecifier]]]:
         split = InlineMarkerSpecifier.__InlineMarkerRegex.split(text)
-        if len(split) == 1:
+        if len(split) <= 1:
             return None
 
         toReturn = [split[0]]
