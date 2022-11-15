@@ -1,4 +1,4 @@
-# VERSION 145    REV 22.08.04.02
+# VERSION 146    REV 22.11.15.01
 
 import ctypes
 import difflib
@@ -217,8 +217,8 @@ def PrintHelp():
     print("                    R:   generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
     print("                Modifiers:")
     print("                    e        shell-escapes the argument")
-    print("                    f:fmt    format the string using a standard printf format")
-    print("                    fi/f:fmt  same as f:fmt modifier, but treats input as ints or floats")
+    print("                    f[fi]:fmt  format the string using a standard printf format")
+    print("                             append an \"i\" or \"f\" (eg. fi/ff) to treat the input as ints or floats")
     print("                    fl:sep   flatten the argument list to a single arg and join the elements with the given separator")
     print("                    g:args   run go with the specified arguments to process the incoming list and return a new one")
     print("                             the sub-go will receive its arguments with via stdin, so /papply should be used")
@@ -234,8 +234,8 @@ def PrintHelp():
     print("                             indices are processed in the given order")
     print("                    sp:pat   split all agruments into more arguments, separated by the given pat regex pattern")
     print("                             excludes blank parts")
-    print("                    ss:x:y:z extracts a substring from the argument with a python-like array indexer expression")
-    print("                    [lr-]strip[:x]  strips whitespace characters from the ends of the argument")
+    print("                    ss:x:y:z  extracts a substring from the argument with a python-like array indexer expression")
+    print("                    [lr]strip[:x]  strips whitespace characters from the ends of the argument")
     print("                             prepend \"l\" or \"r\" to strip to trim only that side of the argument")
     print("                             append a :string to strip to trim only those specific characters")
     print("                    tsp      transpose an argument list to multiple chained arguments; this modifier must come last")
@@ -405,7 +405,7 @@ class ApplyListSpecifier():
                     modifierText = match.group(1)
                     if modifierText == "e":
                         modifiers.append(("e", None))
-                    elif m := re.match("(f[if]?):(.+)", modifierText, re.I):
+                    elif m := re.match("(f[fi]?):(.+)", modifierText, re.I):
                         modifiers.append((m.group(1), m.group(2)))
                     elif m := re.match("fl:(.+)?", modifierText, re.I):
                         separator = m.group(1) or ""
