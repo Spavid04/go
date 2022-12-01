@@ -1,4 +1,4 @@
-# VERSION 147    REV 22.11.15.02
+# VERSION 148    REV 22.12.01.01
 
 import ctypes
 import difflib
@@ -216,6 +216,7 @@ def PrintHelp():
     print("                    PY:  uses the specified py script to fetch an apply list; accepts *-path[,arg]; see go /modulehelp")
     print("                    R:   generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
     print("                Modifiers:")
+    print("                    d        don't insert the argument if it's not explicitly referenced")
     print("                    e        shell-escapes the argument")
     print("                    f[fi]:fmt  format the string using a standard printf format")
     print("                             append an \"i\" or \"f\" (eg. fi/ff) to treat the input as ints or floats")
@@ -409,7 +410,9 @@ class ApplyListSpecifier():
             for match in regexToUse.finditer(argsstr):
                 if match.group(1):
                     modifierText = match.group(1)
-                    if modifierText == "e":
+                    if modifierText == "d":
+                        modifiers.append(("d", None))
+                    elif modifierText == "e":
                         modifiers.append(("e", None))
                     elif m := re.match("(f[fi]?):(.+)", modifierText, re.I):
                         modifiers.append((m.group(1), m.group(2)))
@@ -1759,7 +1762,8 @@ class GoConfig:
                         marker.ApplyList = applyList
                         newArguments.insert(modifier[1], marker)
             elif not applyList.Used:
-                unusedListQueue.put((i, applyList))
+                if not any(x[0] == "d" for x in applyList.Modifiers):
+                    unusedListQueue.put((i, applyList))
 
         sequentialIndex = 0
         for marker in unresolvedMarkers:
@@ -1836,7 +1840,10 @@ class GoConfig:
 
         for applyArgument in self.ApplyLists:
             for (modifierType, modifierArgument) in applyArgument.Modifiers:
-                if modifierType == "e":
+                if modifierType == "d":
+                    # already processed
+                    pass
+                elif modifierType == "e":
                     applyArgument.List = [Utils.EscapeForShell(x) for x in applyArgument.List]
                 elif modifierType in {"f", "fi", "ff"}:
                     convertFunc = lambda x: x
