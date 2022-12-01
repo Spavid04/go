@@ -1,4 +1,4 @@
-# VERSION 148    REV 22.12.01.01
+# VERSION 149    REV 22.12.01.02
 
 import ctypes
 import difflib
@@ -215,6 +215,7 @@ def PrintHelp():
     print("                    P:   reads the input lines from stdin until EOF; returns the same arguments if used again")
     print("                    PY:  uses the specified py script to fetch an apply list; accepts *-path[,arg]; see go /modulehelp")
     print("                    R:   generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
+    print("                    U:   needs an *-int, works similar to D, but includes its modifiers")
     print("                Modifiers:")
     print("                    d        don't insert the argument if it's not explicitly referenced")
     print("                    e        shell-escapes the argument")
@@ -366,7 +367,7 @@ class MatchCache():
         return self.version == get_current_version()
 
 class ApplyListSpecifier():
-    __ApplyRegex = re.compile(r"^(?:([cdfghipr]|py)apply|(-?\d+))(.+)?$", re.I)
+    __ApplyRegex = re.compile(r"^(?:([cdfghipru]|py)apply|(-?\d+))(.+)?$", re.I)
     __ApplyArgumentRegex_OLD = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
     __ApplyArgumentRegex = re.compile(r"(?: \+\[(.+?)\] | -(.+?) ) (?=$|\+\[)", re.I | re.X)
 
@@ -1797,6 +1798,8 @@ class GoConfig:
         # region generate lists
 
         duplicatesToDo = []
+        usesToDo = []
+
         for i in range(len(self.ApplyLists)):
             applyArgument = self.ApplyLists[i]
 
@@ -1804,7 +1807,8 @@ class GoConfig:
                 applyArgument.List = [x for x in Utils.GetClipboardText().splitlines() if len(x) > 0]
             elif applyArgument.SourceType == "d":
                 # processed right after every other list
-                duplicatesToDo.append((self.ApplyLists[int(applyArgument.Source)], applyArgument))
+                duplicate = (self.ApplyLists[int(applyArgument.Source)], applyArgument)
+                duplicatesToDo.append(duplicate)
             elif applyArgument.SourceType == "f":
                 applyArgument.List = Utils.ReadAllLines(applyArgument.Source)
             elif applyArgument.SourceType == "g":
@@ -1826,13 +1830,20 @@ class GoConfig:
                 rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
                     applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
+            elif applyArgument.SourceType == "u":
+                # processed after all modifiers
+                reuse = (self.ApplyLists[int(applyArgument.Source)], applyArgument)
+                duplicatesToDo.append(reuse)
+                usesToDo.append(reuse)
 
-            if applyArgument.SourceType != "d" and not applyArgument.List:
+            if applyArgument.SourceType not in {"d", "u"} and not applyArgument.List:
                 Cprint(">>>apply list index %d is empty! exiting with failure... (%s)" % (i, applyArgument.SourceText), level=3)
                 return None
 
         for (sourceList, destList) in duplicatesToDo:
             destList.List = list(sourceList.List)
+        for (sourceList, destList) in usesToDo:
+            destList.Modifiers = [*sourceList.Modifiers, *destList.Modifiers]
 
         # endregion
 
