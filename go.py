@@ -1,4 +1,4 @@
-# VERSION 149    REV 22.12.01.02
+# VERSION 150    REV 23.02.27.01
 
 import ctypes
 import difflib
@@ -120,9 +120,6 @@ def PrintHelp():
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
     print("  DefaultArguments [list[str]]: prepend the given arguments before any command line arguments every go run")
-    print("  UseOldModifierOrder [bool]: set to True to use the old apply argument modifier order")
-    print("                              (ie: modifiers come before the argument)")
-    print("                              this option will be deprecated in the future")
     print()
     print("Environment variables:")
     print("  GO_DEFAULT_ARGUMENTS [str] : a shell-separated list of arguments to prepend to every go instance")
@@ -368,7 +365,6 @@ class MatchCache():
 
 class ApplyListSpecifier():
     __ApplyRegex = re.compile(r"^(?:([cdfghipru]|py)apply|(-?\d+))(.+)?$", re.I)
-    __ApplyArgumentRegex_OLD = re.compile(r"\+\[(.+?)\](?=$|-|\+)|-(.+)$", re.I)
     __ApplyArgumentRegex = re.compile(r"(?: \+\[(.+?)\] | -(.+?) ) (?=$|\+\[)", re.I | re.X)
 
     def __init__(self,
@@ -405,10 +401,8 @@ class ApplyListSpecifier():
         modifiers = []
         applyArgument = None
 
-        regexToUse = ApplyListSpecifier.__ApplyArgumentRegex_OLD if config.UseOldModifierOrder else ApplyListSpecifier.__ApplyArgumentRegex
-
         if argsstr is not None:
-            for match in regexToUse.finditer(argsstr):
+            for match in ApplyListSpecifier.__ApplyArgumentRegex.finditer(argsstr):
                 if match.group(1):
                     modifierText = match.group(1)
                     if modifierText == "d":
@@ -1329,8 +1323,6 @@ class GoConfig:
     def __init__(self):
         self.ConfigFile = "go.config"
 
-        self.UseOldModifierOrder = False
-
         self.TargetedExtensions = Utils.GetDefaultExecutableExtensions()
         self.TargetedPaths = []
         self.IgnoredPaths = []
@@ -1455,8 +1447,6 @@ class GoConfig:
             for arg in args:
                 if not self.TryParseArgument(arg):
                     Cprint(">>>default argument \"%s\" is an invalid go argument; ignoring..." % (arg), level=2)
-        if "UseOldModifierOrder" in config and config.pop("UseOldModifierOrder"):
-            self.UseOldModifierOrder = True
 
         self.DisablePathCache = False
 
