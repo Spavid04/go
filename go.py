@@ -1,4 +1,4 @@
-# VERSION 150    REV 23.02.27.01
+# VERSION 151    REV 23.02.27.02
 
 import ctypes
 import difflib
@@ -100,6 +100,7 @@ def PrintHelp():
     print("Run with /help to print this help.")
     print("Run with /examples to print some usage examples.")
     print("Run with /modulehelp to print help about external py scripts.")
+    print("Homepage: https://github.com/Spavid04/go")
     print()
     print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
     print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
