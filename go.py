@@ -1,4 +1,4 @@
-# VERSION 152    REV 23.03.01.01
+# VERSION 153    REV 23.09.24.01
 
 import ctypes
 import difflib
@@ -10,6 +10,7 @@ import json
 import os
 import pickle
 import queue
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -805,8 +806,24 @@ class Utils():
         return ""
 
     @staticmethod
+    def _termuxTryGetClipboard() -> typing.Optional[str]:
+        if Utils.IsWindows():
+            return None
+        if not shutil.which("termux-setup-storage"):
+            return None
+        if not shutil.which("termux-clipboard-get"):
+            Cprint(">>>termux requires Termux:API to be installed for the clipboard to work", level=2)
+            return None
+        tcg = subprocess.run(["termux-clipboard-get"], capture_output=True, text=True, encoding="utf-8")
+        if tcg.returncode != 0:
+            return ""
+        return tcg.stdout
+
+    @staticmethod
     def GetClipboardText() -> str:
-        if PYPERCLIP_AVAILABLE:
+        if (c := Utils._termuxTryGetClipboard()) is not None:
+            return c
+        elif PYPERCLIP_AVAILABLE:
             return pyperclip.paste()
         elif Utils.IsWindows():
             Cprint(">>>pyperclip module not found; defaulting to classic ctypes method", level=1)
@@ -864,16 +881,17 @@ class Utils():
 
         newLineSemaphore = threading.Semaphore(0)
 
-        stdoutData = []
-        stdoutLock = threading.Lock()
+        stdoutData = queue.Queue()
+        stderrData = queue.Queue()
 
-        stderrData = []
-        stderrLock = threading.Lock()
+        def helperThread(stream: typing.IO, eventSemaphore: threading.Semaphore, outList: queue.Queue[bytes]):
+            for line in stream:
+                outList.put(line)
+                eventSemaphore.release()
+            eventSemaphore.release()
 
-        stdoutThread = threading.Thread(target=Utils._StreamOutput_Helper, args=(stdout, newLineSemaphore,
-                                                                                 stdoutData, stdoutLock))
-        stderrThread = threading.Thread(target=Utils._StreamOutput_Helper, args=(stderr, newLineSemaphore,
-                                                                                 stderrData, stderrLock))
+        stdoutThread = threading.Thread(target=helperThread, args=(stdout, newLineSemaphore, stdoutData), daemon=True)
+        stderrThread = threading.Thread(target=helperThread, args=(stderr, newLineSemaphore, stderrData), daemon=True)
 
         stdoutThread.start()
         stderrThread.start()
@@ -882,32 +900,17 @@ class Utils():
             newLineSemaphore.acquire()
 
             source = None
-            lock = None
 
-            if len(stdoutData) > 0:
+            if not stdoutData.empty():
                 source = stdoutData
-                lock = stdoutLock
-            elif len(stderrData) > 0:
+            elif not stderrData.empty():
                 source = stderrData
-                lock = stderrLock
             else:
                 newLineSemaphore.acquire()
                 if not stdoutThread.is_alive() and not stderrThread.is_alive():
                     break
 
-            with lock:
-                yield source.pop(0)
-
-    @staticmethod
-    def _StreamOutput_Helper(stream: typing.IO, eventSemaphore: threading.Semaphore,
-                             outList: typing.List[bytes], outListLock: threading.Lock):
-        for line in stream:
-            with outListLock:
-                outList.append(line)
-
-            eventSemaphore.release()
-
-        eventSemaphore.release()
+            yield source.get()
 
     @staticmethod
     def RemoveControlCharacters(s):
