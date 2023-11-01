@@ -1,4 +1,4 @@
-# VERSION 153    REV 23.09.24.01
+# VERSION 154    REV 23.11.02.01
 
 import ctypes
 import difflib
@@ -738,6 +738,7 @@ class Utils():
         return matches
 
     __Compare_RegexObject = None
+    __Compare_SequenceMatcher = difflib.SequenceMatcher()
     @staticmethod
     def ComparePathAndPattern(file: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) \
             -> float:
@@ -767,8 +768,11 @@ class Utils():
             if Utils.IsWindows():
                 pattern = pattern.lower()
 
-            return max(difflib.SequenceMatcher(None, filename, pattern).ratio(),
-                       difflib.SequenceMatcher(None, file, pattern).ratio())
+            sm = Utils.__Compare_SequenceMatcher
+            sm.set_seq2(pattern)
+            sm.set_seq1(filename); r1 = sm.ratio()
+            sm.set_seq1(file); r2 = sm.ratio()
+            return max(r1, r2)
 
     @staticmethod
     def PathContains(path: str, substring: str) -> bool:
