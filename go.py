@@ -1,4 +1,4 @@
-# VERSION 154    REV 23.11.02.01
+# VERSION 155    REV 23.11.02.02
 
 import ctypes
 import difflib
@@ -60,6 +60,8 @@ try:
 except:
     pass
 
+
+config: "GoConfig" = None
 
 MAX_QUIET_LEVEL = 3
 MAX_VERBOSE_LEVEL = 2
@@ -2407,11 +2409,12 @@ def Run(config: GoConfig, goTarget: str,
         if config.WaitForExit:
             return process.returncode
 
-
-if __name__ == "__main__":
+def main():
+    global config
+    
     if len(sys.argv) == 1:
         PrintHelp()
-        exit(0)
+        return 0
 
     config = GoConfig()
     args = list(sys.argv)
@@ -2427,10 +2430,10 @@ if __name__ == "__main__":
 
     if i == len(args):
         PrintHelp()
-        exit(0)
+        return 0
 
     if not config.Validate():
-        exit(-1)
+        return -1
 
     processWaiter = Utils.ProcessWaiter()
     if config.WaitForQueue:
@@ -2449,4 +2452,8 @@ if __name__ == "__main__":
 
     for modulePath in config.ExternalModules:
         config.ExternalModules[modulePath].Exit()
-    exit(result or 0)
+    return result or 0
+
+
+if __name__ == "__main__":
+    exit(main())
