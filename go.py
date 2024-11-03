@@ -1,4 +1,4 @@
-# VERSION 155    REV 23.11.02.02
+# VERSION 156    REV 24.11.03.01
 
 import ctypes
 import difflib
@@ -128,8 +128,8 @@ def PrintHelp():
     print("Environment variables:")
     print("  GO_DEFAULT_ARGUMENTS [str] : a shell-separated list of arguments to prepend to every go instance")
     print()
-    print("By creating a \".gofilter\" file inside a searched directory, listing names with UNIX-like wildcards,")
-    print("  go will ignore matching files/directories recursively.")
+    print("By creating a \".gofilter\" or \"go.filter\"c file inside a searched directory, listing names with UNIX-like wildcards,")
+    print("  go will ignore or include matching files/directories recursively.")
     print("Prepend + or - to the name to explicitly specify whether to include or ignore matches.")
     print("Filters can include files and directories not directly under the current one.")
     print()
@@ -158,7 +158,7 @@ def PrintHelp():
     print("/refresh      : Manually refresh the path cache.")
     print("/nofuzzy      : Disable fuzzy matching, speeding up target search.")
     print("/duplinks     : Include symlinks to executables that were already found.")
-    print("/nofilters    : Ignore .gofilter files.")
+    print("/nofilters    : Ignore gofilter files.")
     print()
     print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
     print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is " + str(MAX_QUIET_LEVEL) + " q's.")
@@ -671,21 +671,29 @@ class Utils():
                 matchingPaths.add(abspath)
             else:
                 for (root, dirs, files) in os.walk(targetedPath, topdown=True):
-                    if (not config.IgnoreGofilters) and ".gofilter" in files:
-                        files.remove(".gofilter")
-                        filter = GoFilter(os.path.join(root, ".gofilter"))
+                    if not config.IgnoreGofilters:
+                        if ".gofilter" in files:
+                            gofilterName = ".gofilter"
+                        elif "go.filter" in files:
+                            gofilterName = "go.filter"
+                        else:
+                            gofilterName = None
+                        
+                        if gofilterName:
+                            files.remove(gofilterName)
+                            gofilter = GoFilter(os.path.join(root, gofilterName))
 
-                        for dir in list(dirs):
-                            if filter.Match(dir) == -1:
-                                dirs.remove(dir)
+                            for dir in list(dirs):
+                                if gofilter.Match(dir) == -1:
+                                    dirs.remove(dir)
 
-                        for file in list(files):
-                            if filter.Match(file) == -1:
-                                files.remove(file)
+                            for file in list(files):
+                                if gofilter.Match(file) == -1:
+                                    files.remove(file)
 
-                        for item in filter.SubIncludes:
-                            abspath = os.path.abspath(os.path.join(root, os.path.normcase(item)))
-                            pathQueue.put(abspath)
+                            for item in gofilter.SubIncludes:
+                                abspath = os.path.abspath(os.path.join(root, os.path.normcase(item)))
+                                pathQueue.put(abspath)
 
                     if recursive and (ignoredDirectories or not includeHidden):
                         dirs_copy = list(dirs)
