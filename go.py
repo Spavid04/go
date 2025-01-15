@@ -1,4 +1,4 @@
-# VERSION 156    REV 24.11.03.01
+# VERSION 157    REV 25.01.15.01
 
 import ctypes
 import difflib
@@ -118,8 +118,9 @@ def PrintHelp():
     print("  AlwaysYes [bool]: always set /yes.")
     print("  AlwaysQuiet [0-3 or bool]: if bool set /quiet, if int set the level of /quiet")
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
-    print("  AlwaysCache [bool]: always use the path cache by default")
-    print("  AlwaysShell [bool]: always run the target through the shell")
+    print("  AlwaysCache [bool]: always use the path cache by default (/cache+)")
+    print("  AlwaysShell [bool]: always run the target through the shell (/shell)")
+    print("  AutoPapplyPipes [bool]: if stdin is a pipe, automatically prepend a papply argument (/autopipe)")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
@@ -173,6 +174,7 @@ def PrintHelp():
     print("/dry          : Does not actually run the target executable.")
     print("/list         : Alias for /echo + /dry.")
     print("/target       : Print only the target and exit. Implies /qmax and /dry.")
+    print("/autopipe     : If stdin is a pipe, automatically prepend a papply argument. Otherwise, does nothing.")
     print()
     print("/cd           : Runs the target in the target's directory, instead of the current one.")
     print("                Append a -[path] to execute in the specified directory")
@@ -1365,7 +1367,7 @@ class GoConfig:
         self.EchoTarget = False
         self.EchoWhen = EchoWhenValues.Always
         self.DryRun = False
-        self.SuppressPrompts = False
+        self.AlwaysYes = False
         self.PrintTarget = False
 
         self.ChangeWorkingDirectory = False
@@ -1452,6 +1454,8 @@ class GoConfig:
             self.TryParseArgument("/cache+")
         if "AlwaysShell" in config and config.pop("AlwaysShell"):
             self.TryParseArgument("/shell")
+        if "AutoPapplyPipes" in config and config.pop("AutoPapplyPipes"):
+            self.TryParseArgument("/autopipe")
         if "NoFuzzyMatch" in config and config.pop("NoFuzzyMatch"):
             self.TryParseArgument("/nofuzzy")
         if "IncludeHidden" in config:
@@ -1612,11 +1616,14 @@ class GoConfig:
         elif lower == "dry":
             self.DryRun = True
         elif lower == "yes":
-            self.SuppressPrompts = True
+            self.AlwaysYes = True
         elif lower == "target":
             self.PrintTarget = True
             self.TryParseArgument("/dry")
             self.TryParseArgument("/qmax")
+        elif lower == "autopipe":
+            if not sys.stdin.isatty():
+                self.TryParseArgument("/papply")
 
         elif lower == "elevate":
             Utils.EnsureAdmin()
@@ -2313,8 +2320,12 @@ def Run(config: GoConfig, goTarget: str,
     elif len(targetArguments) != 0:
         runs = len(targetArguments[0])
 
-    if runs > 50 and not config.SuppressPrompts:
+    if runs > 50 and not config.AlwaysYes:
         Cprint(">>>{0} lines present at source. continue? (Y/n)".format(runs), level=2)
+        if not sys.stdin.isatty():
+            Cprint(">>>stdin is piped. Please use /yes to run", level=2)
+            return -1
+
         answer = ""
         try:
             answer = input()
