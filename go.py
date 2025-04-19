@@ -1,4 +1,4 @@
-# VERSION 158    REV 25.04.19.01
+# VERSION 159    REV 25.04.19.02
 
 import ctypes
 import difflib
@@ -121,6 +121,7 @@ def PrintHelp():
     print("  AlwaysCache [bool]: always use the path cache by default (/cache+)")
     print("  AlwaysShell [bool]: always run the target through the shell (/shell)")
     print("  AutoPapplyPipes [bool]: if stdin is a pipe, automatically prepend a papply argument (/autopipe)")
+    print("  AutoSilentPipe [bool]: if stdout is a pipe, silence all output. Additionally, if stdin is a pipe, pass /yes.")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
@@ -175,6 +176,7 @@ def PrintHelp():
     print("/list         : Alias for /echo + /dry.")
     print("/target       : Print only the target and exit. Implies /qmax and /dry.")
     print("/autopipe     : If stdin is a pipe, automatically prepend a papply argument. Otherwise, does nothing.")
+    print("/autosilent   : If stdout is a pipe, silence all output")
     print()
     print("/cd           : Runs the target in the target's directory, instead of the current one.")
     print("                Append a -[path] to execute in the specified directory")
@@ -1449,6 +1451,8 @@ class GoConfig:
             self.TryParseArgument("/shell")
         if config.pop("AutoPapplyPipes", False):
             self.TryParseArgument("/autopipe")
+        if config.pop("AutoSilentPipe", False):
+            self.TryParseArgument("/autosilent")
         if config.pop("NoFuzzyMatch", False):
             self.TryParseArgument("/nofuzzy")
         if "IncludeHidden" in config:
@@ -1617,6 +1621,11 @@ class GoConfig:
         elif lower == "autopipe":
             if not sys.stdin.isatty():
                 self.TryParseArgument("/papply")
+        elif lower == "autosilent":
+            if not sys.stdout.isatty():
+                self.TryParseArgument("/qmax")
+                if not sys.stdin.isatty():
+                    self.TryParseArgument("/yes")
 
         elif lower == "elevate":
             Utils.EnsureAdmin()
