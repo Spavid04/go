@@ -1,4 +1,4 @@
-# VERSION 157    REV 25.01.15.01
+# VERSION 158    REV 25.04.19.01
 
 import ctypes
 import difflib
@@ -1414,16 +1414,9 @@ class GoConfig:
             Cprint(">>>config file contains invalid json", level=2)
             return
 
-        targetedExtensions = []
-        targetedPaths = []
-        ignoredPaths = []
-
-        if "TargetedExtensions" in config:
-            targetedExtensions = config.pop("TargetedExtensions")
-        if "TargetedPaths" in config:
-            targetedPaths = config.pop("TargetedPaths")
-        if "IgnoredPaths" in config:
-            ignoredPaths = config.pop("IgnoredPaths")
+        targetedExtensions = config.pop("TargetedExtensions", [])
+        targetedPaths = config.pop("TargetedPaths", [])
+        ignoredPaths = config.pop("IgnoredPaths", [])
 
         if overwriteSettings:
             self.TargetedExtensions = targetedExtensions
@@ -1434,7 +1427,7 @@ class GoConfig:
             self.TargetedPaths.extend(targetedPaths)
             self.IgnoredPaths.extend(ignoredPaths)
 
-        if "AlwaysYes" in config and config.pop("AlwaysYes"):
+        if config.pop("AlwaysYes", False):
             self.TryParseArgument("/yes")
         if "AlwaysQuiet" in config:
             value = config.pop("AlwaysQuiet")
@@ -1448,15 +1441,15 @@ class GoConfig:
             if quietLevel > 0:
                 self.TryParseArgument("/yes")
                 self.TryParseArgument("/" + "q" * quietLevel + "uiet")
-        if "AlwaysFirst" in config and config.pop("AlwaysFirst"):
+        if config.pop("AlwaysFirst", False):
             self.FirstMatchFromConfig = True
-        if "AlwaysCache" in config and config.pop("AlwaysCache"):
+        if config.pop("AlwaysCache", False):
             self.TryParseArgument("/cache+")
-        if "AlwaysShell" in config and config.pop("AlwaysShell"):
+        if config.pop("AlwaysShell", False):
             self.TryParseArgument("/shell")
-        if "AutoPapplyPipes" in config and config.pop("AutoPapplyPipes"):
+        if config.pop("AutoPapplyPipes", False):
             self.TryParseArgument("/autopipe")
-        if "NoFuzzyMatch" in config and config.pop("NoFuzzyMatch"):
+        if config.pop("NoFuzzyMatch", False):
             self.TryParseArgument("/nofuzzy")
         if "IncludeHidden" in config:
             value = bool(config.pop("IncludeHidden"))
