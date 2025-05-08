@@ -1,4 +1,10 @@
-# VERSION 159    REV 25.04.19.02
+# VERSION 160    REV 25.05.08.01
+# todo ^^^ remove this sometime later
+
+GO_VERSION_REVISION = 160
+GO_VERSION_DATE = "25.05.08.01"
+
+CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
 import ctypes
 import difflib
@@ -9,6 +15,7 @@ import itertools
 import json
 import os
 import pickle
+# import py_compile below
 import queue
 import shutil
 import subprocess
@@ -79,31 +86,18 @@ def Cprint_gen(level: int) -> typing.Callable:
     return lambda *args, **kwargs: Cprint(*args, level=level, **kwargs)
 
 
-VERSION_REGEX = re.compile(r"^.*?(\d+).+(\d\d\.\d\d\.\d\d\.\d\d).*$")
-CURRENT_VERSION = None
-def parse_version(line: str) -> (str, str):
-    m = VERSION_REGEX.match(line)
-    return (m.group(1), m.group(2))
-def get_current_version() -> (str, str):
-    global CURRENT_VERSION
-    if CURRENT_VERSION is None:
-        with open(__file__, "r", encoding="utf-8") as f:
-            line = f.readline().strip()
-        CURRENT_VERSION = parse_version(line)
-    return CURRENT_VERSION
-
 def PrintHelp():
     if not can_print(2):
         return
 
-    print("Revision %s    Version Date %s" % get_current_version())
+    print("Revision %d    Version Date %s" % CURRENT_VERSION)
     print()
     print("The main use of this script is to find an executable and run it easily.")
     print("go [/go argument 1] [/go argument 2] ... <target> [target args] ...")
     print("Run with /help to print this help.")
     print("Run with /examples to print some usage examples.")
     print("Run with /modulehelp to print help about external py scripts.")
-    print("Homepage: https://github.com/Spavid04/go")
+    print("Homepage: %s" % Updater.URL_REPO)
     print()
     print("By default, go only searches non-recursively in the current directory and %PATH% variable.")
     print("Specifying an absolute path as a target will always run that target, regardless of it being indexed or not.")
@@ -315,40 +309,106 @@ def PrintModulehelp():
 
 
 class Updater():
-    SCRIPT_URL_PREFIX = "https://raw.githubusercontent.com/Spavid04/go/master/"
+    URL_RAW = "https://raw.githubusercontent.com/Spavid04/go/master/go.py"
+    URL_REPO = "https://github.com/Spavid04/go"
+    
+    # todo remove this sometime later
+    @staticmethod
+    def _try_parse_legacy_version(data: bytes) -> typing.Optional[typing.Tuple[int, str]]:
+        LEGACY_VERSION_REGEX = re.compile(rb"^.*?(\d+).+(\d\d\.\d\d\.\d\d\.\d\d).*$", re.M)
+        
+        try:
+            m = LEGACY_VERSION_REGEX.match(data)
+            return (int(m.group(1)), m.group(2).decode("utf-8"))
+        except Exception:
+            return None
+
+    @staticmethod
+    def try_parse_version(data: bytes) -> typing.Optional[typing.Tuple[int, str]]:
+        VERSION_FINDER_REGEX = re.compile(rb"^\s*GO_VERSION_(REVISION|DATE)\s*=\s*(\d+|\"[^\"]+\")\s*$", re.M)
+        revision = None
+        date = None
+        for match in VERSION_FINDER_REGEX.finditer(data):
+            if match.group(1) == b"REVISION":
+                revision = int(match.group(2))
+            elif match.group(1) == b"DATE":
+                date = match.group(2)[1:-1].decode("utf-8")
+
+            if revision is not None and date is not None:
+                return (revision, date)
+        return None
 
     @staticmethod
     def TryUpdate():
-        prnt = Cprint_gen(2)
+        printfunc = Cprint_gen(2)
 
-        currentVersion = get_current_version()
-        prnt(">>>current version:\t[revision %s    version date %s]" % currentVersion)
+        printfunc(">>>current version:\t[revision %d    version date %s]" % CURRENT_VERSION)
+        try:
+            newScriptData = Utils.GetDataFromUrl(Updater.URL_RAW)
+        except Exception:
+            Cprint(">>>failed to fetch remote script", level=3)
+            exit(-1)
+        newVersion = Updater.try_parse_version(newScriptData)
+        
+        # todo remove this sometime later
+        if newVersion is None:
+            newVersion = Updater._try_parse_legacy_version(newScriptData)
 
-        beginningText = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "go.py", (0, 50))
-        newVersion = parse_version(beginningText.splitlines()[0])
-        if currentVersion >= newVersion:
-            prnt(">>>server has:\t\t[revision %s    version date %s]" % newVersion)
-            if currentVersion == newVersion:
-                prnt(">>>you are using the newest version!")
+        if newVersion is None:
+            Cprint(">>>failed to parse remote version; please update manually", level=3)
+            exit(-1)
+
+        if CURRENT_VERSION >= newVersion:
+            printfunc(">>>server has:\t\t[revision %d    version date %s]" % newVersion)
+            if CURRENT_VERSION == newVersion:
+                printfunc(">>>you are using the newest version!")
             else:
-                prnt(">>>you are using a newer version!")
+                printfunc(">>>you are using a newer version!")
             exit(0)
 
-        prnt(">>>new version available! [revision %s    version date %s]" % newVersion)
-        prnt(">>>source: %s" % (Updater.SCRIPT_URL_PREFIX + "go.py"))
+        printfunc(">>>new version available! [revision %s    version date %s]" % newVersion)
+        printfunc(">>>source: %s" % Updater.URL_RAW)
 
-        prnt(">>>update? (Y/n): ")
+        scriptExtension = os.path.splitext(Utils.GetScriptPath())[1].lower()
+        if scriptExtension in {".py", ".pyc"}:
+            targetPath = Utils.GetScriptPath()
+            shouldCompile = (scriptExtension == ".pyc")
+            printfunc(">>>will write to %s%s" % (targetPath, " directly compiled" if shouldCompile else ""))
+        else:
+            targetPath = os.path.join(Utils.GetScriptDir(), "go.py")
+            shouldCompile = False
+            printfunc(">>>unknown current script format, will write to %s" % targetPath)
+
+        printfunc(">>>update? (Y/n): ")
         choice = input()
 
         if len(choice) > 0 and choice[0].lower() == "n":
-            prnt(">>>update cancelled")
+            printfunc(">>>update cancelled")
             exit(0)
 
-        newScriptText = Utils.GetTextFromUrl(Updater.SCRIPT_URL_PREFIX + "go.py")
-        with open(__file__, "w", encoding="utf-8") as f:
-            f.write(newScriptText)
+        tmpfd = None
+        tmppath = None
+        try:
+            tmpfd, tmppath = tempfile.mkstemp(suffix=".py")
+            with open(tmpfd, "wb") as tmp:
+                tmp.write(newScriptData)
+                tmp.flush()
 
-        prnt(">>>all ok!")
+            if shouldCompile:
+                import py_compile
+                py_compile.compile(tmppath, targetPath)
+            else:
+                shutil.copy(tmppath, targetPath)
+        except Exception:
+            Cprint(">>>failed to write script file, please update manually %s", level=3)
+            exit(-1)
+        finally:
+            if tmpfd:
+                tmpfd.close()
+            if tmppath:
+                os.remove(tmppath)
+
+        printfunc(">>>all ok!")
         exit(0)
 
 
@@ -360,12 +420,12 @@ class MatchCacheItem():
 
 class MatchCache():
     def __init__(self, timestamp: float, paths: typing.List[MatchCacheItem]):
-        self.version = get_current_version()
+        self.version = CURRENT_VERSION
         self.timestamp = timestamp
         self.paths = paths
 
     def GoodVersion(self) -> bool:
-        return self.version == get_current_version()
+        return self.version == CURRENT_VERSION
 
 class ApplyListSpecifier():
     __ApplyRegex = re.compile(r"^(?:([cdfghipru]|py)apply|(-?\d+))(.+)?$", re.I)
@@ -629,15 +689,22 @@ class Utils():
                 os.system("clear")
 
     @staticmethod
-    def GetScriptDir() -> str:
+    def GetScriptPath() -> typing.Optional[str]:
         scriptPath = __file__
         try:
             scriptPath = os.readlink(scriptPath)
-        except:
+        except OSError:
             pass
+        except Exception:
+            return None
+        return scriptPath
 
-        scriptDir = os.path.split(scriptPath)[0]
-        return scriptDir
+    @staticmethod
+    def GetScriptDir() -> typing.Optional[str]:
+        scriptPath = Utils.GetScriptPath()
+        if scriptPath is None:
+            return None
+        return os.path.split(scriptPath)[0]
 
     @staticmethod
     def IsHidden(path: str) -> bool:
@@ -1123,12 +1190,16 @@ class Utils():
                     Utils.ProcessWaiter._SetFilePids(pids)
 
     @staticmethod
-    def GetTextFromUrl(url: str, range: typing.Tuple[int, int] = None) -> str:
+    def GetDataFromUrl(url: str, range: typing.Tuple[int, int] = None) -> bytes:
         request = urllib.request.Request(url)
         if range is not None:
             request.headers["Range"] = "bytes=%d-%d" % range
         with urllib.request.urlopen(request) as f:
-            return f.read().decode("utf-8")
+            return f.read()
+
+    @staticmethod
+    def GetTextFromUrl(url: str, range: typing.Tuple[int, int] = None) -> str:
+            return Utils.GetDataFromUrl(url, range).decode("utf-8")
 
     @staticmethod
     def GetDefaultExecutableExtensions() -> typing.List[str]:
@@ -1403,6 +1474,9 @@ class GoConfig:
 
         if os.path.abspath(path).lower() != path.lower():
             scriptDir = Utils.GetScriptDir()
+            if scriptDir is None:
+                Cprint(">>>failed to get script directory", level=2)
+                return
             path = os.path.join(scriptDir, path)
 
         if not os.path.isfile(path):
@@ -2197,11 +2271,15 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
     allFiles: typing.List[MatchCacheItem] = []
 
     scriptDir = Utils.GetScriptDir()
-    cachePath = os.path.join(scriptDir, "go.cache")
+    if scriptDir is None:
+        Cprint(">>>failed to get script directory, ignoring cache...", level=2)
+        cachePath = None
+    else:
+        cachePath = os.path.join(scriptDir, "go.cache")
     overwriteCache = config.RefreshPathCache and not config.DisablePathCache
 
     if (config.UsePathCache and not config.DisablePathCache) and not config.RefreshPathCache:
-        if os.path.isfile(cachePath):
+        if cachePath and os.path.isfile(cachePath):
             success = False
             try:
                 with open(cachePath, "rb") as f:
@@ -2236,7 +2314,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
 
         allFiles = unique(allFiles, config.IgnoreDuplicateLinks)
 
-    if overwriteCache:
+    if overwriteCache and cachePath:
         with open(cachePath, "wb") as f:
             matchCache = MatchCache(time.time(), allFiles)
             pickle.dump(matchCache, f)
