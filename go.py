@@ -1,8 +1,8 @@
-# VERSION 160    REV 25.05.08.01
+# VERSION 161    REV 25.08.11.01
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 160
-GO_VERSION_DATE = "25.05.08.01"
+GO_VERSION_REVISION = 161
+GO_VERSION_DATE = "25.08.11.01"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -114,7 +114,7 @@ def PrintHelp():
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
     print("  AlwaysCache [bool]: always use the path cache by default (/cache+)")
     print("  AlwaysShell [bool]: always run the target through the shell (/shell)")
-    print("  AutoPapplyPipes [bool]: if stdin is a pipe, automatically prepend a papply argument (/autopipe)")
+    print("  AutoPapplyPipes [bool]: if stdin is a pipe, automatically set the first argument to papply if not already (/autopipe)")
     print("  AutoSilentPipe [bool]: if stdout is a pipe, silence all output. Additionally, if stdin is a pipe, pass /yes.")
     print("  NoFuzzyMatch [bool]: always set /nofuzzy")
     print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
@@ -141,7 +141,8 @@ def PrintHelp():
     print("/executables  : Toggle inclusion of files that are marked as executables, regardless of extension.")
     print("                By default, Windows excludes them, and UNIX includes them.")
     print("/hidden[+-]   : Includes or excludes hidden files and directories. Omitting + or - toggles the setting.")
-    print("Any of the previous commands will temporarily disable the path cache.")
+    print()
+    print(">>> Any of the previous commands will temporarily disable the path cache.")
     print()
     print("/regex        : Matches the files by regex instead of filenames.")
     print("/wild         : Matches the files by UNIX-like wildcards instead of filenames.")
@@ -169,7 +170,7 @@ def PrintHelp():
     print("/dry          : Does not actually run the target executable.")
     print("/list         : Alias for /echo + /dry.")
     print("/target       : Print only the target and exit. Implies /qmax and /dry.")
-    print("/autopipe     : If stdin is a pipe, automatically prepend a papply argument. Otherwise, does nothing.")
+    print("/autopipe     : If stdin is a pipe, automatically set the first argument to papply if not already.")
     print("/autosilent   : If stdout is a pipe, silence all output")
     print()
     print("/cd           : Runs the target in the target's directory, instead of the current one.")
@@ -456,11 +457,11 @@ class ApplyListSpecifier():
 
         groups = m.groups()
         if groups[1] is None:
-            type = groups[0]
+            argtype = groups[0]
             argsstr = groups[2]
         else:
             # %%number+modifiers%% becomes %%dapply-number+modifiers
-            type = "d"
+            argtype = "d"
             argsstr = "-" + groups[1] + groups[2]
         modifiers = []
         applyArgument = None
@@ -529,11 +530,10 @@ class ApplyListSpecifier():
                             groupNumber = int(m.group(1))
 
                         modifiers.append(("xtr", (groupNumber, pattern)))
-
                 elif match.group(2):
                     applyArgument = match.group(2)
 
-        return ApplyListSpecifier(text, type, modifiers, applyArgument)
+        return ApplyListSpecifier(text, argtype, modifiers, applyArgument)
 
 
 class InlineMarkerSpecifier():
@@ -1442,6 +1442,7 @@ class GoConfig:
         self.DryRun = False
         self.AlwaysYes = False
         self.PrintTarget = False
+        self.AutoPipe = False
 
         self.ChangeWorkingDirectory = False
         self.WorkingDirectory = None
@@ -1694,7 +1695,7 @@ class GoConfig:
             self.TryParseArgument("/qmax")
         elif lower == "autopipe":
             if not sys.stdin.isatty():
-                self.TryParseArgument("/papply")
+                self.AutoPipe = True
         elif lower == "autosilent":
             if not sys.stdout.isatty():
                 self.TryParseArgument("/qmax")
@@ -1803,6 +1804,10 @@ class GoConfig:
     def ProcessApplyArguments(self, targetArguments: typing.List[str]) \
             -> typing.Optional[typing.List[typing.Union[typing.List[str], Utils.RepeatGenerator]]]:
         newArguments = []
+        
+        if self.AutoPipe:
+            if not self.ApplyLists or self.ApplyLists[0].SourceType != "p":
+                self.ApplyLists.insert(0, ApplyListSpecifier("papply", "p"))
 
         # region preprocess inline markers and apply list usage
 
@@ -1824,7 +1829,7 @@ class GoConfig:
                             notEmpty.append(item)
                     elif isinstance(item, InlineMarkerSpecifier):
                         if item.Index is None:
-                            item.applyList = None
+                            item.ApplyList = None
                             unresolvedMarkers.append(item)
                         else:
                             item.ApplyList = self.ApplyLists[item.Index]
