@@ -1,8 +1,8 @@
-# VERSION 163    REV 26.03.25.02
+# VERSION 164    REV 26.03.25.03
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 163
-GO_VERSION_DATE = "26.03.25.02"
+GO_VERSION_REVISION = 164
+GO_VERSION_DATE = "26.03.25.03"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -110,6 +110,7 @@ def PrintHelp():
     print("  TargetedExtensions [list[str]]: additional extensions considered executable")
     print("  IgnoredPaths [list[str]]: additional ignored paths; recursive if a directory")
     print("  NoInline [truthy]: disable replacement of inline markers (/noinline)")
+    print("  SimpleApply [truthy]: only search for plain apply inline markers (/simpleapply)")
     print("  AlwaysYes [truthy]: always set /yes.")
     print("  AlwaysQuiet [0-3 or truthy]: if number then set the level of /quiet, else /quiet")
     print("  AlwaysFirst [truthy]: automatically pick the first of multiple matches")
@@ -197,6 +198,8 @@ def PrintHelp():
     print("/unsafe       : Run the command as a simple string, and don't escape anything if possible.")
     print()
     print("/noinline     : Disable replacement of inline markers.")
+    print("/simpleapply  : Only search for plain apply inline markers (eg %%%% or $$$$) and ignore others.")
+    print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
     print("                + (default) and - control whether to repeat source lists that are smaller, or to pass empty.")
@@ -538,7 +541,8 @@ class ApplyListSpecifier():
 
 
 class InlineMarkerSpecifier():
-    __InlineMarkerRegex = re.compile(r"(\#*)(%%|\$\$)(-?\d+|.+?)??(%%|\$\$)", re.I)
+    __InlineMarkerRegex = re.compile(r"(\#*)(%%|\$\$)(-?\d+|.+?)??(\2)", re.I)
+    __InlineMarkerRegexSimple = re.compile(r"(\#*)(%%|\$\$)()(\2)", re.I) # empty group to simplify parsing
 
     def __init__(self, index: typing.Optional[int]):
         self.Index = index
@@ -550,9 +554,10 @@ class InlineMarkerSpecifier():
         return self.ApplyList.ShouldTranspose
 
     @staticmethod
-    def TryParseMarkers(text: str) \
+    def TryParseMarkers(text: str, simple: bool = False) \
             -> typing.Optional[typing.List[typing.Union[str, "InlineMarkerSpecifier", ApplyListSpecifier]]]:
-        split = InlineMarkerSpecifier.__InlineMarkerRegex.split(text)
+        reg = InlineMarkerSpecifier.__InlineMarkerRegexSimple if simple else InlineMarkerSpecifier.__InlineMarkerRegex
+        split = reg.split(text)
         if len(split) <= 1:
             return None
 
@@ -1463,7 +1468,10 @@ class GoConfig:
         self.ApplyLists : typing.List[ApplyListSpecifier] = []
         self.Rollover = False
         self.RolloverZero = False
+
         self.NoInline = False
+        self.SimpleApply = False
+
         self.RepeatCount = None
         self.CrossJoin = False
 
@@ -1507,6 +1515,8 @@ class GoConfig:
 
         if config.pop("NoInline", False):
             self.TryParseArgument("/noinline")
+        if config.pop("SimpleApply", False):
+            self.TryParseArgument("/simpleapply")
 
         if config.pop("AlwaysYes", False):
             self.TryParseArgument("/yes")
@@ -1751,8 +1761,12 @@ class GoConfig:
             self.Rollover = True
             if lower.endswith("-"):
                 self.RolloverZero = True
+
         elif lower == "noinline":
             self.NoInline = True
+        elif lower == "simpleapply":
+            self.SimpleApply = True
+
         elif lower.startswith("repeat-"):
             self.RepeatCount = int(lower[7:])
         elif lower == "crossjoin":
@@ -1821,7 +1835,7 @@ class GoConfig:
             newArguments = list(targetArguments)
         else:
             for argument in targetArguments:
-                markers = InlineMarkerSpecifier.TryParseMarkers(argument)
+                markers = InlineMarkerSpecifier.TryParseMarkers(argument, self.SimpleApply)
                 if markers is None:
                     newArguments.append(argument)
                     continue
