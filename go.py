@@ -1,8 +1,8 @@
-# VERSION 165    REV 26.03.25.04
+# VERSION 166    REV 26.03.25.05
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 165
-GO_VERSION_DATE = "26.03.25.04"
+GO_VERSION_REVISION = 166
+GO_VERSION_DATE = "26.03.25.05"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -111,6 +111,7 @@ def PrintHelp():
     print("  IgnoredPaths [list[str]]: additional ignored paths; recursive if a directory")
     print("  NoInline [truthy]: disable replacement of inline markers (/noinline)")
     print("  SimpleApply [truthy]: only search for plain apply inline markers (/simpleapply)")
+    print("  InlineMarker [str]: set the inline marker to only match the specified string (/inlinemarker-X)")
     print("  AlwaysYes [truthy]: always set /yes.")
     print("  AlwaysQuiet [0-3 or truthy]: if number then set the level of /quiet, else /quiet")
     print("  AlwaysFirst [truthy]: automatically pick the first of multiple matches")
@@ -199,6 +200,7 @@ def PrintHelp():
     print()
     print("/noinline     : Disable replacement of inline markers.")
     print("/simpleapply  : Only search for plain apply inline markers (eg %%%% or $$$$) and ignore others.")
+    print("/inlinemarker-X : Set the inline marker to only match the specified string. Implies /simpleapply.")
     print()
     print("/repeat-XX    : Repeats the execution XX times (before any apply list trimming is done).")
     print("/rollover[+-] : Sets apply parameters to run as many times as possible.")
@@ -541,8 +543,8 @@ class ApplyListSpecifier():
 
 
 class InlineMarkerSpecifier():
-    __InlineMarkerRegex = re.compile(r"(\#*)(%%|\$\$)(-?\d+|.+?)??(\2)", re.I)
-    __InlineMarkerRegexSimple = re.compile(r"(\#*)(%%|\$\$)()(\2)", re.I) # empty group to simplify parsing
+    __InlineMarkerRegexDefault = re.compile(r"(\#*)(%%|\$\$)(-?\d+|.+?)??(\2)", re.I)
+    __InlineMarkerRegexSimpleDefault = re.compile(r"(\#*)(%%|\$\$)()(\2)", re.I) # empty group to simplify parsing
 
     def __init__(self, index: typing.Optional[int]):
         self.Index = index
@@ -554,9 +556,14 @@ class InlineMarkerSpecifier():
         return self.ApplyList.ShouldTranspose
 
     @staticmethod
-    def TryParseMarkers(text: str, simple: bool = False) \
+    def TryParseMarkers(text: str, markerOrSimpleMatch: typing.Union[str | bool] = False) \
             -> typing.Optional[typing.List[typing.Union[str, "InlineMarkerSpecifier", ApplyListSpecifier]]]:
-        reg = InlineMarkerSpecifier.__InlineMarkerRegexSimple if simple else InlineMarkerSpecifier.__InlineMarkerRegex
+        if isinstance(markerOrSimpleMatch, str):
+            reg = re.compile("()(" + re.escape(markerOrSimpleMatch) + ")()()", re.I)
+        elif markerOrSimpleMatch:
+            reg = InlineMarkerSpecifier.__InlineMarkerRegexSimpleDefault
+        else:
+            reg = InlineMarkerSpecifier.__InlineMarkerRegexDefault
         split = reg.split(text)
         if len(split) <= 1:
             return None
@@ -1468,6 +1475,7 @@ class GoConfig:
 
         self.NoInline = False
         self.SimpleApply = False
+        self.InlineMarker = None
 
         self.RepeatCount = None
         self.CrossJoin = False
@@ -1514,6 +1522,8 @@ class GoConfig:
             self.TryParseArgument("/noinline")
         if config.pop("SimpleApply", False):
             self.TryParseArgument("/simpleapply")
+        if "InlineMarker" in config:
+            self.TryParseArgument("/inlinemarker-" + config.pop("InlineMarker"))
 
         if config.pop("AlwaysYes", False):
             self.TryParseArgument("/yes")
@@ -1654,7 +1664,7 @@ class GoConfig:
             self.RegexTargetMatch = True
         elif lower == "wild":
             self.WildcardTargetMatch = True
-        elif lower.startswith("in"):
+        elif lower.startswith("in") and lower[3] in "+-":
             mode = True if lower[2] == "+" else False
             substring = argument[3:]
 
@@ -1763,6 +1773,9 @@ class GoConfig:
             self.NoInline = True
         elif lower == "simpleapply":
             self.SimpleApply = True
+        elif lower.startswith("inlinemarker-"):
+            self.InlineMarker = argument[13:]
+            self.TryParseArgument("/simpleapply")
 
         elif lower.startswith("repeat-"):
             self.RepeatCount = int(lower[7:])
@@ -1832,7 +1845,7 @@ class GoConfig:
             newArguments = list(targetArguments)
         else:
             for argument in targetArguments:
-                markers = InlineMarkerSpecifier.TryParseMarkers(argument, self.SimpleApply)
+                markers = InlineMarkerSpecifier.TryParseMarkers(argument, self.InlineMarker or self.SimpleApply)
                 if markers is None:
                     newArguments.append(argument)
                     continue
