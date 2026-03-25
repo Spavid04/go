@@ -1,8 +1,8 @@
-# VERSION 164    REV 26.03.25.03
+# VERSION 165    REV 26.03.25.04
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 164
-GO_VERSION_DATE = "26.03.25.03"
+GO_VERSION_REVISION = 165
+GO_VERSION_DATE = "26.03.25.04"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -681,7 +681,7 @@ class Utils():
             Utils.__COLORAMA_INITED = True
             return True
         except ModuleNotFoundError:
-            Cprint(">>>colorama module not found; clearing screen the classic way", level=1)
+            Cprint(">>>colorama module not found; clearing screen the basic way", level=1)
             return False
 
     @staticmethod
@@ -689,10 +689,7 @@ class Utils():
         if COLORAMA_AVAILABLE and Utils.__COLORAMA_INITED:
             print(colorama.ansi.clear_screen())
         else:
-            if Utils.IsWindows():
-                os.system("cls")
-            else:
-                os.system("clear")
+            print("\033c\033[3J", end="")
 
     @staticmethod
     def GetScriptPath() -> typing.Optional[str]:
