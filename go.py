@@ -1,8 +1,8 @@
-# VERSION 166    REV 26.03.25.05
+# VERSION 167    REV 26.03.25.06
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 166
-GO_VERSION_DATE = "26.03.25.05"
+GO_VERSION_REVISION = 167
+GO_VERSION_DATE = "26.03.25.06"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -393,13 +393,11 @@ class Updater():
             printfunc(">>>update cancelled")
             exit(0)
 
-        tmpfd = None
         tmppath = None
         try:
             tmpfd, tmppath = tempfile.mkstemp(suffix=".py")
-            with open(tmpfd, "wb") as tmp:
+            with open(tmpfd, "wb", closefd=True) as tmp:
                 tmp.write(newScriptData)
-                tmp.flush()
 
             if shouldCompile:
                 import py_compile
@@ -410,9 +408,7 @@ class Updater():
             Cprint(">>>failed to write script file, please update manually %s", level=3)
             exit(-1)
         finally:
-            if tmpfd:
-                tmpfd.close()
-            if tmppath:
+            if tmppath and os.path.exists(tmppath):
                 os.remove(tmppath)
 
         printfunc(">>>all ok!")
