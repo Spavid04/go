@@ -1,8 +1,8 @@
-# VERSION 161    REV 25.08.11.01
+# VERSION 162    REV 26.03.25.01
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 161
-GO_VERSION_DATE = "25.08.11.01"
+GO_VERSION_REVISION = 162
+GO_VERSION_DATE = "26.03.25.01"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -109,6 +109,7 @@ def PrintHelp():
     print("  TargetedPaths [list[str]]: additional searched paths; recursive if a directory")
     print("  TargetedExtensions [list[str]]: additional extensions considered executable")
     print("  IgnoredPaths [list[str]]: additional ignored paths; recursive if a directory")
+    print("  NoInline [bool]: disable replacement of inline markers (/noinline)")
     print("  AlwaysYes [bool]: always set /yes.")
     print("  AlwaysQuiet [0-3 or bool]: if bool set /quiet, if int set the level of /quiet")
     print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
@@ -1503,6 +1504,9 @@ class GoConfig:
             self.TargetedExtensions.extend(targetedExtensions)
             self.TargetedPaths.extend(targetedPaths)
             self.IgnoredPaths.extend(ignoredPaths)
+
+        if config.pop("NoInline", False):
+            self.TryParseArgument("/noinline")
 
         if config.pop("AlwaysYes", False):
             self.TryParseArgument("/yes")
