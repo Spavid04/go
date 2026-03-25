@@ -1,8 +1,8 @@
-# VERSION 162    REV 26.03.25.01
+# VERSION 163    REV 26.03.25.02
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 162
-GO_VERSION_DATE = "26.03.25.01"
+GO_VERSION_REVISION = 163
+GO_VERSION_DATE = "26.03.25.02"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -109,16 +109,16 @@ def PrintHelp():
     print("  TargetedPaths [list[str]]: additional searched paths; recursive if a directory")
     print("  TargetedExtensions [list[str]]: additional extensions considered executable")
     print("  IgnoredPaths [list[str]]: additional ignored paths; recursive if a directory")
-    print("  NoInline [bool]: disable replacement of inline markers (/noinline)")
-    print("  AlwaysYes [bool]: always set /yes.")
-    print("  AlwaysQuiet [0-3 or bool]: if bool set /quiet, if int set the level of /quiet")
-    print("  AlwaysFirst [bool]: automatically pick the first of multiple matches")
-    print("  AlwaysCache [bool]: always use the path cache by default (/cache+)")
-    print("  AlwaysShell [bool]: always run the target through the shell (/shell)")
-    print("  AutoPapplyPipes [bool]: if stdin is a pipe, automatically set the first argument to papply if not already (/autopipe)")
-    print("  AutoSilentPipe [bool]: if stdout is a pipe, silence all output. Additionally, if stdin is a pipe, pass /yes.")
-    print("  NoFuzzyMatch [bool]: always set /nofuzzy")
-    print("  IncludeHidden [bool]: specify whether to include hidden files and directories")
+    print("  NoInline [truthy]: disable replacement of inline markers (/noinline)")
+    print("  AlwaysYes [truthy]: always set /yes.")
+    print("  AlwaysQuiet [0-3 or truthy]: if number then set the level of /quiet, else /quiet")
+    print("  AlwaysFirst [truthy]: automatically pick the first of multiple matches")
+    print("  AlwaysCache [truthy]: always use the path cache by default (/cache+)")
+    print("  AlwaysShell [truthy]: always run the target through the shell (/shell)")
+    print("  AutoPapplyPipes [truthy]: if stdin is a pipe, automatically set the first argument to papply automatically (/autopipe)")
+    print("  AutoSilentPipe [truthy]: if stdout is a pipe, silence all output. Additionally, if stdin is a pipe, pass /yes.")
+    print("  NoFuzzyMatch [truthy]: always set /nofuzzy")
+    print("  IncludeHidden [truthy]: specify whether to include hidden files and directories")
     print("  CacheInvalidationTime [float]: override the default cache invalidation time with the specified one, in hours")
     print("  DefaultArguments [list[str]]: prepend the given arguments before any command line arguments every go run")
     print()
