@@ -1,8 +1,8 @@
-# VERSION 167    REV 26.03.25.06
+# VERSION 168    REV 26.05.08.01
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 167
-GO_VERSION_DATE = "26.03.25.06"
+GO_VERSION_REVISION = 168
+GO_VERSION_DATE = "26.05.08.01"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -221,6 +221,8 @@ def PrintHelp():
     print("                    P:   reads the input lines from stdin until EOF; returns the same arguments if used again")
     print("                    PY:  uses the specified py script to fetch an apply list; accepts *-path[,arg]; see go /modulehelp")
     print("                    R:   generates a range of numbers and accepts 1 to 3 comma-separated parameters (python range(...))")
+    print("                    S:   searches for the specified executables in normal go paths, then returns the first match")
+    print("                    SM:  identical to the S apply, but returns all matches instead of just the first one")
     print("                    U:   needs an *-int, works similar to D, but includes its modifiers")
     print("                Modifiers:")
     print("                    d        don't insert the argument if it's not explicitly referenced")
@@ -431,7 +433,7 @@ class MatchCache():
         return self.version == CURRENT_VERSION
 
 class ApplyListSpecifier():
-    __ApplyRegex = re.compile(r"^(?:([cdfghipru]|py)apply|(-?\d+))(.+)?$", re.I)
+    __ApplyRegex = re.compile(r"^(?:([cdfghiprus]|py|sm)apply|(-?\d+))(.+)?$", re.I)
     __ApplyArgumentRegex = re.compile(r"(?: \+\[(.+?)\] | -(.+?) ) (?=$|\+\[)", re.I | re.X)
 
     def __init__(self,
@@ -1949,6 +1951,12 @@ class GoConfig:
                 rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
                 if rangeArgumentsRegex.match(applyArgument.Source):
                     applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
+            elif applyArgument.SourceType in {"s", "sm"}:
+                matches,_ = FindMatchesAndAlternatives(self, applyArgument.Source)
+                if applyArgument.SourceType == "sm":
+                    applyArgument.List = matches
+                else:
+                    applyArgument.List = [matches[0]]
             elif applyArgument.SourceType == "u":
                 # processed after all modifiers
                 reuse = (self.ApplyLists[int(applyArgument.Source)], applyArgument)
