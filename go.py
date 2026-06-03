@@ -1,8 +1,8 @@
-# VERSION 168    REV 26.05.08.01
+# VERSION 169    REV 26.06.03.01
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 168
-GO_VERSION_DATE = "26.05.08.01"
+GO_VERSION_REVISION = 169
+GO_VERSION_DATE = "26.06.03.01"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -33,21 +33,21 @@ import urllib.request
 
 try:
     import regex as re
-except:
+except Exception:
     import re
 
 COLORAMA_AVAILABLE = False
 try:
     import colorama
     COLORAMA_AVAILABLE = True
-except:
+except Exception:
     pass
 
 ILOCK_AVAILABLE = False
 try:
     import ilock
     ILOCK_AVAILABLE = True
-except:
+except Exception:
     pass
 
 PSUTIL_AVAILABLE = False
@@ -55,7 +55,7 @@ try:
     sys.stderr = open(os.devnull, "w")
     import psutil
     PSUTIL_AVAILABLE = True
-except:
+except Exception:
     pass
 finally:
     sys.stderr = sys.__stderr__
@@ -64,7 +64,7 @@ PYPERCLIP_AVAILABLE = False
 try:
     import pyperclip
     PYPERCLIP_AVAILABLE = True
-except:
+except Exception:
     pass
 
 
@@ -127,12 +127,12 @@ def PrintHelp():
     print("Environment variables:")
     print("  GO_DEFAULT_ARGUMENTS [str] : a shell-separated list of arguments to prepend to every go instance")
     print()
-    print("By creating a \".gofilter\" or \"go.filter\"c file inside a searched directory, listing names with UNIX-like wildcards,")
+    print("By creating a \".gofilter\" or \"go.filter\" file inside a searched directory, listing names with UNIX-like wildcards,")
     print("  go will ignore or include matching files/directories recursively.")
     print("Prepend + or - to the name to explicitly specify whether to include or ignore matches.")
     print("Filters can include files and directories not directly under the current one.")
     print()
-    print("Avaliable go arguments:")
+    print("Available go arguments:")
     print("All arguments accept a -- prefix instead of /")
     print()
     print("/update       : Check for go.py script update.")
@@ -160,7 +160,7 @@ def PrintHelp():
     print("/duplinks     : Include symlinks to executables that were already found.")
     print("/nofilters    : Ignore gofilter files.")
     print()
-    print("/quiet        : Supresses any messages (but not exceptions) from this script. /yes is implied.")
+    print("/quiet        : Suppresses any messages (but not exceptions) from this script. /yes is implied.")
     print("                Repeat the \"q\" to suppress more messages (eg. /qqquiet). Maximum is " + str(MAX_QUIET_LEVEL) + " q's.")
     print("/verbose      : Enables verbose messages.")
     print("                Repeat the \"v\" to enable more messages (eg. /vverbose). Maximum is " + str(MAX_VERBOSE_LEVEL) + " v's.")
@@ -242,7 +242,7 @@ def PrintHelp():
     print("                    s:expr   extract only the specified argument indexes from the source list; use s-:expr to invert")
     print("                             expr is a comma-separated list of python-like array indexer")
     print("                             indices are processed in the given order")
-    print("                    sp:pat   split all agruments into more arguments, separated by the given pat regex pattern")
+    print("                    sp:pat   split all arguments into more arguments, separated by the given pat regex pattern")
     print("                             excludes blank parts")
     print("                    ss:x:y:z  extracts a substring from the argument with a python-like array indexer expression")
     print("                    [lr]strip[:x]  strips whitespace characters from the ends of the argument")
@@ -407,7 +407,7 @@ class Updater():
             else:
                 shutil.copy(tmppath, targetPath)
         except Exception:
-            Cprint(">>>failed to write script file, please update manually %s", level=3)
+            Cprint(">>>failed to write script file, please update manually", level=3)
             exit(-1)
         finally:
             if tmppath and os.path.exists(tmppath):
@@ -725,7 +725,7 @@ class Utils():
 
     @staticmethod
     def ParsePathsForFiles(targetedPaths: typing.List[str], extensions: typing.List[str],
-                           recursive: bool, includeModX: bool, includeHidden: bool,
+                           recursive: bool, includeModX: bool, includeHidden: bool, ignoreGofilters: bool = False,
                            ignoredPaths: typing.Optional[typing.List[str]] = None) -> \
             typing.List[typing.Tuple[str, str]]:
         matches = []
@@ -750,7 +750,7 @@ class Utils():
                 matchingPaths.add(abspath)
             else:
                 for (root, dirs, files) in os.walk(targetedPath, topdown=True):
-                    if not config.IgnoreGofilters:
+                    if not ignoreGofilters:
                         if ".gofilter" in files:
                             gofilterName = ".gofilter"
                         elif "go.filter" in files:
@@ -829,8 +829,7 @@ class Utils():
     __Compare_RegexObject = None
     __Compare_SequenceMatcher = difflib.SequenceMatcher()
     @staticmethod
-    def ComparePathAndPattern(file: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) \
-            -> float:
+    def ComparePathAndPattern(file: str, pattern: str, fuzzy: bool, asRegex: bool, asWildcard: bool) -> float:
         if Utils.IsWindows():
             file = file.lower()
         (filename, _) = os.path.splitext(file)
@@ -841,7 +840,7 @@ class Utils():
 
             return int(filename == pattern or file == pattern)
         elif asRegex:
-            if Utils.__Compare_RegexObject is None:
+            if Utils.__Compare_RegexObject is None or Utils.__Compare_RegexObject.pattern != pattern:
                 Utils.__Compare_RegexObject = re.compile(pattern, re.I)
 
             if Utils.__Compare_RegexObject.match(filename) or Utils.__Compare_RegexObject.match(file):
@@ -934,7 +933,7 @@ class Utils():
         while True:
             try:
                 line = input()
-            except:
+            except Exception:
                 break
 
             if not line:
@@ -1016,7 +1015,7 @@ class Utils():
         if Utils.IsWindows():
             try:
                 hasAdmin = ctypes.windll.shell32.IsUserAnAdmin()
-            except:
+            except Exception:
                 pass
         else:
             hasAdmin = (os.geteuid() == 0)
@@ -1102,7 +1101,6 @@ class Utils():
         __ILOCK_NAME = "go-waitqueue"
 
         def __init__(self):
-            self.test = 0
             self._pids: typing.List[int] = []
             self._useQueueing = False
 
@@ -1121,7 +1119,7 @@ class Utils():
             try:
                 with open(Utils.ProcessWaiter.__PIDS_FILE, "r", newline="") as f:
                     return [int(x) for x in f.read().splitlines()]
-            except:
+            except Exception:
                 return []
 
         @staticmethod
@@ -1129,7 +1127,7 @@ class Utils():
             try:
                 with open(Utils.ProcessWaiter.__PIDS_FILE, "w", newline="") as f:
                     f.write(os.linesep.join(str(x) for x in pids))
-            except:
+            except Exception:
                 pass
 
         @staticmethod
@@ -1499,7 +1497,7 @@ class GoConfig:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 config: dict = json.load(f)
-        except:
+        except Exception:
             Cprint(">>>config file contains invalid json", level=2)
             return
 
@@ -1662,7 +1660,7 @@ class GoConfig:
             self.RegexTargetMatch = True
         elif lower == "wild":
             self.WildcardTargetMatch = True
-        elif lower.startswith("in") and lower[3] in "+-":
+        elif lower.startswith("in") and lower[2] in "+-":
             mode = True if lower[2] == "+" else False
             substring = argument[3:]
 
@@ -2094,7 +2092,7 @@ class GoConfig:
 
         try:
             minLength = min(len(x.List) for x in self.ApplyLists if not x.ShouldTranspose)
-        except:
+        except Exception:
             minLength = self.RepeatCount or 1
 
         for applyArgument in self.ApplyLists:
@@ -2323,7 +2321,7 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
                     matchCache = pickle.load(f)
                     assert isinstance(matchCache, MatchCache) and matchCache.GoodVersion()
                     success = True
-            except:
+            except Exception:
                 overwriteCache = True
 
             if success:
@@ -2340,9 +2338,9 @@ def FindMatchesAndAlternatives(config: GoConfig, target: str) -> typing.Tuple[ty
 
     if len(allFiles) == 0:
         for (path, filename) in itertools.chain(
-                Utils.ParsePathsForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions, False, config.IncludeAnyExecutables, config.IncludeHidden),
-                Utils.ParsePathsForFiles([os.getcwd()], config.TargetedExtensions, False, config.IncludeAnyExecutables, config.IncludeHidden),
-                Utils.ParsePathsForFiles(config.TargetedPaths, config.TargetedExtensions, True, config.IncludeAnyExecutables, config.IncludeHidden, config.IgnoredPaths)
+                Utils.ParsePathsForFiles(os.environ["PATH"].split(os.pathsep), config.TargetedExtensions, False, config.IncludeAnyExecutables, config.IncludeHidden, config.IgnoreGofilters),
+                Utils.ParsePathsForFiles([os.getcwd()], config.TargetedExtensions, False, config.IncludeAnyExecutables, config.IncludeHidden, config.IgnoreGofilters),
+                Utils.ParsePathsForFiles(config.TargetedPaths, config.TargetedExtensions, True, config.IncludeAnyExecutables, config.IncludeHidden, config.IgnoreGofilters, config.IgnoredPaths)
         ):
             item = MatchCacheItem(path, filename)
             if os.path.islink(path):
