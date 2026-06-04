@@ -1,8 +1,8 @@
-# VERSION 169    REV 26.06.03.01
+# VERSION 170    REV 26.06.04.01
 # todo ^^^ remove this sometime later
 
-GO_VERSION_REVISION = 169
-GO_VERSION_DATE = "26.06.03.01"
+GO_VERSION_REVISION = 170
+GO_VERSION_DATE = "26.06.04.01"
 
 CURRENT_VERSION = (GO_VERSION_REVISION, GO_VERSION_DATE)
 
@@ -240,7 +240,7 @@ def PrintHelp():
     print("                             appending a number after rs will select that group instead of the first one (eg. rs3:...)")
     print("                    rms:rgx  equivalent to rm:rgx followed by a rs:rgx; allows setting a group number like \"rs:rgx\"")
     print("                    s:expr   extract only the specified argument indexes from the source list; use s-:expr to invert")
-    print("                             expr is a comma-separated list of python-like array indexer")
+    print("                             expr is a comma-separated list of python-like array slices")
     print("                             indices are processed in the given order")
     print("                    sp:pat   split all arguments into more arguments, separated by the given pat regex pattern")
     print("                             excludes blank parts")
@@ -1218,27 +1218,7 @@ class Utils():
         return extensions
 
     @staticmethod
-    def GetSliceFunc(sliceText: str) -> typing.Optional[typing.Callable]:
-        m = re.match("^(-?\\d+)?(:)?(-?\\d+)?(:)?(-?\\d+)?$", sliceText, re.I)
-        if not m:
-            return None
-
-        x = m.group(1) or ""
-        y = m.group(3) or ""
-        z = m.group(5) or ""
-        colons = bool(m.group(2)) + bool(m.group(4))
-
-        expression = x
-        if colons >= 1:
-            expression += ":" + y
-        if colons == 2:
-            expression += ":" + z
-
-        func = eval("lambda x : x[" + expression + "]")
-        return func
-
-    @staticmethod
-    def ApplySlices(slices: typing.List[typing.Callable], sourceArray: list, excludeSlicesInsteadOfInclude: bool) -> typing.Optional[list]:
+    def ApplySlices(slices: typing.List[slice], sourceArray: list, excludeSlicesInsteadOfInclude: bool) -> typing.Optional[list]:
         if len(sourceArray) == 0:
             return []
         if len(slices) == 0 and excludeSlicesInsteadOfInclude:
@@ -1248,7 +1228,7 @@ class Utils():
         indices = list(range(len(sourceArray)))
         chosenIndices = []
         for s in slices:
-            sliceIndices = s(indices)
+            sliceIndices = indices[s]
             if isinstance(sliceIndices, int):
                 chosenIndices.append([sliceIndices])
             else:
@@ -1296,6 +1276,41 @@ class Utils():
             result.append("".join(accumulator))
 
         return result
+
+    @staticmethod
+    def StringToRange(text: str) -> range | None:
+        text = text.strip()
+        m = re.match(r"^(-?\d+)\s*(?:,(-?\d+)\s*(?:,(-?\d+))?)?$", text.strip())
+        if not m:
+            return None
+
+        start = int(m.group(1)) if m.group(2) else 0
+        end =   int(m.group(2)) if m.group(2) else int(m.group(1))
+        step =  int(m.group(3)) if m.group(3) else 1
+
+        return range(start, end, step)
+
+    @staticmethod
+    def StringToSlice(text: str, likeCode: bool = False) -> slice | None:
+        """likeCode modifies slices so that if only the first number is provided, it is treated as a single index, similar to how slices work in code"""
+        text = text.strip()
+        m = re.match(r"^(-?\d+)?:?(-?\d+)?:?(-?\d+)?$", text, re.I)
+        if not m:
+            return None
+
+        start = int(m.group(1)) if m.group(1) else None
+        end =   int(m.group(2)) if m.group(2) else None
+        step =  int(m.group(3)) if m.group(3) else None
+        if likeCode \
+                and (start is not None) and (end is None) and (step is None) \
+                and (":" not in text):
+            if start < 0:
+                end = start - 1
+                step = -1
+            else:
+                end = start + 1
+
+        return slice(start, end, step)
 
     class RepeatGenerator():
         def __init__(self, item, count: int):
@@ -1946,9 +1961,7 @@ class GoConfig:
                     moduleArgument = pyapplyArguments[1]
                 applyArgument.List = self._getOrInitExternalModule(modulePath).GetApplyList(applyArgument, moduleArgument)
             elif applyArgument.SourceType == "r":
-                rangeArgumentsRegex = re.compile("-?\\d+(,-?\\d+){0,2}", re.I)
-                if rangeArgumentsRegex.match(applyArgument.Source):
-                    applyArgument.List = [str(x) for x in eval("range(" + applyArgument.Source + ")")]
+                applyArgument.List = [str(x) for x in Utils.StringToRange(applyArgument.Source)]
             elif applyArgument.SourceType in {"s", "sm"}:
                 matches,_ = FindMatchesAndAlternatives(self, applyArgument.Source)
                 if applyArgument.SourceType == "sm":
@@ -2020,7 +2033,7 @@ class GoConfig:
                     (excludeInstead, expression) = modifierArgument
                     slices = []
                     for expr in expression.split(","):
-                        s = Utils.GetSliceFunc(expr)
+                        s = Utils.StringToSlice(expr, True)
                         if s:
                             slices.append(s)
                     applyArgument.List = Utils.ApplySlices(slices, applyArgument.List, excludeInstead)
@@ -2029,8 +2042,8 @@ class GoConfig:
                     newList = [re.split(pattern, x) for x in applyArgument.List]
                     applyArgument.List = [x for l in newList for x in l if len(x) > 0]
                 elif modifierType == "ss":
-                    s = Utils.GetSliceFunc(modifierArgument)
-                    applyArgument.List = [s(x) for x in applyArgument.List]
+                    s = Utils.StringToSlice(modifierArgument, True)
+                    applyArgument.List = [x[s] for x in applyArgument.List]
                 elif modifierType == "strip":
                     side, characters = modifierArgument
                     side = (side or "").lower()
